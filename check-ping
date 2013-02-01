@@ -1,0 +1,151 @@
+#! /bin/sh
+#
+PROG="$(basename $0)"
+
+## defaults
+
+count=1
+interval=1
+
+
+## usage and version
+
+usage () {
+cat <<EOF
+Usage: $PROG [options] [HOST ...]
+
+Check that the HOST is reachable using 'ping';
+exit with nonzero status if this reports an error.
+
+Any number of HOSTs can be given on the command-line: the exit status
+will be the number of hosts that failed the 'qping' check.  When
+called with no arguments, '$PROG' reads the host names from STDIN, so
+you can for instance do::
+
+    sge-list-nodes d | $PROG
+
+No output is printed to STDOUT unless the '--verbose'
+option is given.
+
+
+Options:
+
+  --count, -c NUM
+              Probe each host NUM times (default: $count)
+
+  --interval, -i NUM
+              Wait NUM seconds between probes of the same host.
+              (Default: $interval.)
+
+  --help, -h  Print this help text.
+
+  --verbose   Output 'qping -info' report.
+
+EOF
+}
+
+
+## helper functions
+die () {
+  rc="$1"
+  shift
+  (echo -n "$PROG: ERROR: ";
+      if [ $# -gt 0 ]; then echo "$@"; else cat; fi) 1>&2
+  exit $rc
+}
+
+warn () {
+  (echo -n "$PROG: WARNING: ";
+      if [ $# -gt 0 ]; then echo "$@"; else cat; fi) 1>&2
+}
+
+have_command () {
+  type "$1" >/dev/null 2>/dev/null
+}
+
+require_command () {
+  if ! have_command "$1"; then
+    die 1 "Could not find required command '$1' in system PATH. Aborting."
+  fi
+}
+
+is_absolute_path () {
+    expr match "$1" '/' >/dev/null 2>/dev/null
+}
+
+
+## parse command-line 
+
+short_opts='c:i:hv'
+long_opts='count:,interval:,help,verbose'
+
+if [ "x$(getopt -T)" != 'x--' ]; then
+    # GNU getopt
+    args=$(getopt --name "$PROG" --shell sh -l "$long_opts" -o "$short_opts" -- "$@")
+    if [ $? -ne 0 ]; then
+        die 1 "Type '$PROG --help' to get usage information."
+    fi
+    # use 'eval' to remove getopt quoting
+    eval set -- $args
+else
+    # old-style getopt, use compatibility syntax
+    args=$(getopt "$short_opts" "$@") 
+    if [ $? -ne 0 ]; then
+        die 1 "Type '$PROG --help' to get usage information."
+    fi
+    set -- $args
+fi
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --count|-c)    count="$2";    shift ;;
+        --interval|-i) interval="$2"; shift ;;
+        --verbose|-v)  verbose='-v' ;;
+        --help|-h) usage; exit 0 ;;
+        --) shift; break ;;
+    esac
+    shift
+done
+
+## main
+
+require_command ping
+require_command mktemp
+require_command fgrep
+
+
+# environment sanity checks
+tmp=$(mktemp -q)
+if [ -z "$tmp" ]; then
+    # EX_OSERR
+    die 71 "Cannot create temporary file."
+fi
+trap "rm '$tmp'" EXIT
+
+# if no arguments, read them from STDIN
+if [ $# -eq 0 ]; then
+    set -- $(cat)
+fi
+
+failures=0
+for host in "$@"; do
+    # do the actual check
+    env LC_ALL=C ping -c "$count" -i "$interval" "$host" > "$tmp" 2>&1
+
+    if fgrep -q '100% packet loss' "$tmp"; then
+        rc=1
+        outcome='FAIL'
+    else
+        rc=0
+        outcome='ok'
+    fi
+    msg="$(fgrep 'packet loss' "$tmp")"
+
+    failures=$(expr $failures + $rc)
+
+    if [ -n "$verbose" ]; then
+        echo "${host}: ${outcome}: ${msg}"
+    fi
+done
+
+exit $failures

@@ -1,0 +1,102 @@
+#! /bin/sh
+#
+PROG="$(basename $0)"
+
+## defaults
+lines=25
+
+
+## usage and version text
+
+usage () {
+cat <<EOF
+Usage: $PROG [options] [HOST ...]
+
+Show the last lines output to the ILOM SP serial console.
+
+Options:
+
+  --all, -A   Show the whole recorded console history.
+              (May be very long!)
+
+  --lines, -n NUM
+              Only show the last NUM lines (default: $lines).
+
+  --help, -h  Print this help text.
+
+EOF
+}
+
+
+## helper functions
+die () {
+  rc="$1"
+  shift
+  (echo -n "$PROG: ERROR: ";
+      if [ $# -gt 0 ]; then echo "$@"; else cat; fi) 1>&2
+  exit $rc
+}
+
+warn () {
+  (echo -n "$PROG: WARNING: ";
+      if [ $# -gt 0 ]; then echo "$@"; else cat; fi) 1>&2
+}
+
+have_command () {
+  type "$1" >/dev/null 2>/dev/null
+}
+
+require_command () {
+  if ! have_command "$1"; then
+    die 1 "Could not find required command '$1' in system PATH. Aborting."
+  fi
+}
+
+is_absolute_path () {
+    expr match "$1" '/' >/dev/null 2>/dev/null
+}
+
+
+## parse command-line 
+
+short_opts='an:h'
+long_opts='all,lines:,help'
+
+if [ "x$(getopt -T)" != 'x--' ]; then
+    # GNU getopt
+    args=$(getopt --name "$PROG" --shell sh -l "$long_opts" -o "$short_opts" -- "$@")
+    if [ $? -ne 0 ]; then
+        die 1 "Type '$PROG --help' to get usage information."
+    fi
+    # use 'eval' to remove getopt quoting
+    eval set -- $args
+else
+    # old-style getopt, use compatibility syntax
+    args=$(getopt "$short_opts" "$@") 
+    if [ $? -ne 0 ]; then
+        die 1 "Type '$PROG --help' to get usage information."
+    fi
+    set -- $args
+fi
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --all|-a)   lines=0 ;;
+        --lines|-n) lines="$2"; shift ;;
+        --help|-h)  usage; exit 0 ;;
+        --)         shift; break ;;
+    esac
+    shift
+done
+
+var=$1
+
+## main
+
+require_command ssh
+
+for host in "$@"; do 
+    echo "==== ${host} ===="
+    echo -e "set /HOST/console lines=${lines}\nshow /HOST/console/history\nexit" \
+        | ssh sc${host}
+done

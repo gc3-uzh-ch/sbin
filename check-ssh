@@ -1,0 +1,187 @@
+#! /bin/sh
+#
+PROG="$(basename $0)"
+
+usage () {
+cat <<EOF
+Usage: $PROG [options] [HOST ...]
+
+Check that SSH connectivity to the node works; exit with nonzero
+status if not.
+
+Any number of HOSTs can be given on the command-line: the exit status
+will be the number of hosts that failed the check.  When called with
+no arguments, '$PROG' reads the host names from STDIN, so you can for
+instance do::
+
+    sge-list-nodes a | $PROG
+
+No output is printed to STDOUT unless the '--verbose'
+option is given.
+
+
+Options:
+
+  --help, -h  Print this help text.
+
+  --verbose   Output diagnostic messages about the connection status
+
+  --timeout, -t NUM
+              Set the SSH connection timeout to NUM seconds (default: 60)
+
+EOF
+}
+
+
+## defaults
+
+timeout=60
+
+
+## helper functions
+die () {
+  rc="$1"
+  shift
+  (echo -n "$PROG: ERROR: ";
+      if [ $# -gt 0 ]; then echo "$@"; else cat; fi) 1>&2
+  exit $rc
+}
+
+warn () {
+  (echo -n "$PROG: WARNING: ";
+      if [ $# -gt 0 ]; then echo "$@"; else cat; fi) 1>&2
+}
+
+have_command () {
+  type "$1" >/dev/null 2>/dev/null
+}
+
+require_command () {
+  if ! have_command "$1"; then
+    die 1 "Could not find required command '$1' in system PATH. Aborting."
+  fi
+}
+
+is_absolute_path () {
+    expr match "$1" '/' >/dev/null 2>/dev/null
+}
+
+
+## parse command-line 
+
+short_opts='ht:v'
+long_opts='help,timeout:,verbose'
+
+if [ "x$(getopt -T)" != 'x--' ]; then
+    # GNU getopt
+    args=$(getopt --name "$PROG" --shell sh -l "$long_opts" -o "$short_opts" -- "$@")
+    if [ $? -ne 0 ]; then
+        die 1 "Type '$PROG --help' to get usage information."
+    fi
+    # use 'eval' to remove getopt quoting
+    eval set -- $args
+else
+    # old-style getopt, use compatibility syntax
+    args=$(getopt "$short_opts" "$@") 
+    if [ $? -ne 0 ]; then
+        die 1 "Type '$PROG --help' to get usage information."
+    fi
+    set -- $args
+fi
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --timeout|-t) timeout="$2"; shift ;;
+        --verbose|-v) verbose='-v' ;;
+        --help|-h) usage; exit 0 ;;
+        --) shift; break ;;
+    esac
+    shift
+done
+
+## main
+
+require_command ssh
+require_command mktemp
+require_command egrep
+require_command fgrep
+
+# netcat is called `nc` on RHEL/Debian/Ubuntu and `netcat` on SLES ...
+if have_command nc; then
+    nc='nc'
+elif have_command netcat; then
+    nc='netcat'
+else
+    die 1 "Command 'nc' or 'netcat' is required. Please check your '\$PATH' settings, or install it."
+fi
+
+
+# environment sanity checks
+tmp=$(mktemp -q)
+if [ -z "$tmp" ]; then
+    # EX_OSERR
+    die 71 "Cannot create temporary file."
+fi
+trap "rm '$tmp'" EXIT
+
+# if no arguments, read them from STDIN
+if [ $# -eq 0 ]; then
+    set -- $(cat)
+fi
+
+# count number of failures
+failures=0
+
+# check with netcat that the port is open
+for host in "$@"; do
+    # do the actual check
+    nc -v -z "$host" 22 > "$tmp" 2>&1
+
+    msg=$(fgrep "succeeded" "$tmp")
+    if [ -z "$msg" ]; then
+        rc=1
+        msg=$(cat "$tmp")
+        # only print message in case of failure; good hosts advance to next step
+        if [ -n "$verbose" ]; then
+            echo "${host}: FAIL: ${msg}"
+        fi
+    else
+        rc=0
+        hosts="$hosts ${host}"
+    fi
+
+    failures=$(expr $failures + $rc)
+
+done
+
+# now try connecting with SSH
+for host in $hosts; do
+    # do the actual check
+    env LC_ALL=C \
+        timeout --kill-after $(expr 1 + ${timeout}) ${timeout} -- \
+        ssh -o "BatchMode=yes" -T -n "$host" uptime > "$tmp" 2>&1
+
+    # the word 'up' seems to have been translated, whereas 'load average' is
+    # not, so let's check for it as a tag sign that the output is OK
+    msg=$(fgrep 'load average' "$tmp")
+    if [ -z "$msg" ]; then
+        rc=1
+        outcome='FAIL'
+        if egrep -q -i '(Killed|Terminated)' "$tmp"; then
+            msg="${timeout}-seconds timeout exceeded."
+        else
+            msg=$(cat "$tmp")
+        fi
+    else
+        rc=0
+        outcome='ok'
+    fi
+
+    failures=$(expr $failures + $rc)
+
+    if [ -n "$verbose" ]; then
+        echo "${host}: ${outcome}: ${msg}"
+    fi
+done
+
+exit $failures

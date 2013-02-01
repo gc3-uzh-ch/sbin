@@ -1,0 +1,124 @@
+#! /bin/sh
+#
+PROG="$(basename $0)"
+
+usage () {
+cat <<EOF
+Usage: $PROG [options] [STATE]
+
+List host names of nodes reported by SGE to be in the given STATE.
+The optional argument STATE is any combination of the letters:
+
+  u(nknown)
+  a(larm)
+  A(larm)
+  C(alendar  suspended)
+  s(uspended)
+  S(ubordinate)
+  d(isabled)
+  D(isabled)
+  E(rror)
+
+For an explanation, see the qstat(1p) man page, section "OUTPUT FORMATS".
+
+If the STATE argument is omitted, $PROG outputs a list of all SGE nodes.
+
+
+Options:
+
+  --help, -h  Print this help text.
+
+EOF
+}
+
+
+## helper functions
+die () {
+  rc="$1"
+  shift
+  (echo -n "$PROG: ERROR: ";
+      if [ $# -gt 0 ]; then echo "$@"; else cat; fi) 1>&2
+  exit $rc
+}
+
+warn () {
+  (echo -n "$PROG: WARNING: ";
+      if [ $# -gt 0 ]; then echo "$@"; else cat; fi) 1>&2
+}
+
+have_command () {
+  type "$1" >/dev/null 2>/dev/null
+}
+
+require_command () {
+  if ! have_command "$1"; then
+    die 1 "Could not find required command '$1' in system PATH. Aborting."
+  fi
+}
+
+is_absolute_path () {
+    expr match "$1" '/' >/dev/null 2>/dev/null
+}
+
+
+## parse command-line 
+
+short_opts='h'
+long_opts='help'
+
+if [ "x$(getopt -T)" != 'x--' ]; then
+    # GNU getopt
+    args=$(getopt --name "$PROG" --shell sh -l "$long_opts" -o "$short_opts" -- "$@")
+    if [ $? -ne 0 ]; then
+        die 1 "Type '$PROG --help' to get usage information."
+    fi
+    # use 'eval' to remove getopt quoting
+    eval set -- $args
+else
+    # old-style getopt, use compatibility syntax
+    args=$(getopt "$short_opts" "$@") 
+    if [ $? -ne 0 ]; then
+        die 1 "Type '$PROG --help' to get usage information."
+    fi
+    set -- $args
+fi
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --help|-h) usage; exit 0 ;;
+        --) shift; break ;;
+    esac
+    shift
+done
+
+var=$1
+
+## main
+
+require_command qstat
+
+if [ $# -gt 0 ]; then
+    select="-qs $1"
+fi
+
+# Example `qstat -f -qs d` output::
+#
+#     [root@mngt1 2013-01-30.1709]# qstat -f -qs d
+#     
+#     queuename                                          qtype resv/used/tot. load_avg arch          states
+#     -----------------------------------------------------------------------------------------------------
+#     iftp.q@r02c01b02n02                                BIP   0/0/8          -NA-     lx24-amd64    adu
+#     -----------------------------------------------------------------------------------------------------
+#     iftp.q@r02c01b06n01                                BIP   0/0/8          0.00     lx24-amd64    d
+#     -----------------------------------------------------------------------------------------------------
+#     iftp.q@r02c01b06n02                                BIP   0/0/8          -NA-     lx24-amd64    adu
+#
+# We only keep the lines with queue names, extract the host names,
+# then uniquify (as the same host could be assigned to several
+# queues).
+#
+qstat -f $select \
+    | fgrep '@' \
+    | cut -d'@' -f2 \
+    | cut -d' ' -f1 \
+    | sort -u
