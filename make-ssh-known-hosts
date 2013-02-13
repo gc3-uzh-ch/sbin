@@ -1,0 +1,165 @@
+#!/usr/bin/env perl
+#
+our $rcsid='$Id$';
+our $VERSION='1.0';
+
+=pod
+
+=head1 NAME
+
+sample - Do something PERLish
+
+=head1 SYNOPSIS
+
+sample [OPTIONS] [FILE ...]
+
+Output the SSH public keys of all hosts specified in the given
+I<FILE>s (which must follow the format of F</etc/hosts>).  If not
+I<FILE> is given, then read host names and addresses from
+F</etc/hosts>.  Relies on the B<ssh-keyscan> program to do the actual
+work.
+
+Options:
+
+=over 4
+
+=item -n, --no-act, --just-print
+
+Do not harvest SSH keys, instead print the collected host names and IP
+addresses as they would be passed to the B<ssh-keyscan> program.
+
+=item --help
+
+Print help text and exit
+
+=back
+
+=head1 COPYRIGHT AND LICENCE
+
+Copyright (c) 2013 GC3, University of Zurich. All rights reserved.
+
+You may copy, distribute and modify this file according to the GNU GPL
+version 3 or (at your option) any later version.
+See http://www.gnu.org/licenses/gpl.html for license details.
+
+=cut
+
+
+use strict;
+use English;
+use Getopt::Long;
+use Pod::Usage;
+
+
+sub verbose ($$);
+sub in ($@);
+
+
+# provide default for options
+my $verbose = 0;
+my $no_act = 0;
+Getopt::Long::Configure ('gnu_getopt', 'no_ignore_case');
+GetOptions (
+        'verbose|v:+' => \$verbose,
+        'no-act|dry-run|just-print|n!' => \$no_act,
+        'help' => sub { pod2usage(-verbose => $verbose); },
+        'version|V' => sub { print $PROGRAM_NAME .' '. $VERSION ."\n"; exit; }
+) or pod2usage();
+
+
+## main
+
+my @hostfiles = @ARGV;
+push @hostfiles, '/etc/hosts' if ($#ARGV < 0);
+
+open KEYSCAN, "|-", "ssh-keyscan -t rsa,dsa,ecdsa -f -"
+    or die "Cannot run 'ssh-keyscan'";
+
+foreach my $line (@{&hosts2sshkeyscan(@hostfiles)}) {
+    if ($no_act) {
+        print "$line\n";
+    } else {
+        print KEYSCAN "$line\n";
+    };
+};
+
+close KEYSCAN;
+
+
+## subroutines
+
+# hosts2sshkeyscan (FILE)
+#
+# Read a hosts file, join on the unqualified names and return a list
+# of "addrs names" as expected for `ssh-keyscan` input. (Each "addrs"
+# is a comma-separated list of IP addresses, and each "names" is a
+# comma-separated list of host names.)
+#
+sub hosts2sshkeyscan (@) {
+    my %addrs;
+    my %names;
+
+    foreach my $filename (@_) {
+        open INPUT, "<$filename";
+        while (<INPUT>) {
+            chomp;
+
+            # ignore comments and blank lines
+            next if m/^ *(#.*)?$/;
+
+            # parse line
+            my ($ipaddr, $fqdn, $aliases) = split(/\s+/, $_, 3);
+
+            # ignore localhost and collective addresses
+            next if $ipaddr =~ m/^(127\.|::1|ff00::|fe00::0)/;
+            next if $fqdn =~ m/^ip6-all/;
+
+            # use unqualified first name as join key
+            my $name = (split(/\./, $fqdn))[0];
+
+            if (not defined($addrs{$name})) {
+                $addrs{$name} = { };
+            }
+            $addrs{$name}{$ipaddr} = 1;
+
+            if (not defined($names{$name})) {
+                $names{$name} = { };
+            };
+            $names{$name}{$fqdn} = 1;
+            foreach my $alias (split(/\s+/, $aliases)) {
+                ${$names{$name}}{$alias} = 1;
+            };
+        };
+        close INPUT;
+    };
+
+    my $result = [ ];
+    foreach my $name (sort keys %addrs) {
+        push @$result, (join(',', keys %{$addrs{$name}}) .' '. join(',', keys %{$names{$name}}));
+    };
+    return $result;
+}
+
+
+# verbose (LVL, MSG)
+#
+# Print MSG if LVL <= $verbose .
+#
+sub verbose ($$) {
+    my $lvl = shift;
+    my $msg = shift;
+    print $msg . "\n" if ($lvl <= $verbose);
+}
+
+
+# in (ITEM, LIST)
+#
+# return true if ITEM is 'eq' to some element in LIST
+#
+sub in ($@) {
+    my $item = shift;
+    return grep { $item eq $_ } @_;
+}
+
+
+__END__
