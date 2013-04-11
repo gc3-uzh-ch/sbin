@@ -1,0 +1,152 @@
+#! /bin/sh
+#
+PROG="$(basename $0)"
+
+## defaults
+
+DEFAULT_MAX_UID=500
+DEFAULT_OOM_ADJ=-17
+
+
+## usage
+
+usage () {
+cat <<EOF
+Usage: $PROG [options]
+
+Set the '/proc/PID/oom_adj' value for all processes owned by system users.
+A "system user" is any user whose UID is less than $DEFAULT_MAX_UID (you can
+change this value with the '-m' option).
+
+This is a crude hack to workaround the lack of cgroups support in GridEngine 6.2.
+
+Options:
+
+  --max-uid, -m NUM
+              Only affect processes whose real user ID is less than NUM.
+              (Default: $DEFAULT_MAX_UID)
+
+  --oom-adj, -a NUM
+              Set the '/proc/PID/oom_adj' value to NUM (default: $DEFAULT_OOM_ADJ).
+
+  --no-act, -n
+              Print what would have been done, but do not actually make any change
+              to the system.
+
+  --help, -h  Print this help text.
+
+EOF
+}
+
+
+## helper functions
+die () {
+  rc="$1"
+  shift
+  (echo -n "$PROG: ERROR: ";
+      if [ $# -gt 0 ]; then echo "$@"; else cat; fi) 1>&2
+  exit $rc
+}
+
+log () {
+    lvl="$1"
+    shift
+    if [ "${VERBOSE:-0}" -ge "$lvl" ]; then
+        echo "$@"
+    fi
+}
+
+warn () {
+  (echo -n "$PROG: WARNING: ";
+      if [ $# -gt 0 ]; then echo "$@"; else cat; fi) 1>&2
+}
+
+have_command () {
+  type "$1" >/dev/null 2>/dev/null
+}
+
+require_command () {
+  if ! have_command "$1"; then
+    die 1 "Could not find required command '$1' in system PATH. Aborting."
+  fi
+}
+
+is_absolute_path () {
+    expr match "$1" '/' >/dev/null 2>/dev/null
+}
+
+
+## parse command-line
+
+short_opts='a:hm:nv'
+long_opts='help,max-uid:,oom-adj:,no-act,dry-run,just-print,verbose'
+
+if [ "x$(getopt -T)" != 'x--' ]; then
+    # GNU getopt
+    args=$(getopt --name "$PROG" --shell sh -l "$long_opts" -o "$short_opts" -- "$@")
+    if [ $? -ne 0 ]; then
+        die 1 "Type '$PROG --help' to get usage information."
+    fi
+    # use 'eval' to remove getopt quoting
+    eval set -- $args
+else
+    # old-style getopt, use compatibility syntax
+    args=$(getopt "$short_opts" "$@")
+    if [ $? -ne 0 ]; then
+        die 1 "Type '$PROG --help' to get usage information."
+    fi
+    set -- $args
+fi
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --oom-adj|-a) oom_adj="$2"; shift ;;
+        --max-uid|-m) max_uid="$2"; shift ;;
+        --no-act|--dry-run|--just-print|-n) maybe=echo ;;
+        --verbose|-v) verbose='-v'; VERBOSE=$(expr ${VERBOSE:-0} + 1) ;;
+        --help|-h) usage; exit 0 ;;
+        --) shift; break ;;
+    esac
+    shift
+done
+
+## main
+
+require_command expr
+require_command ps
+
+if [ -z "$max_uid" ]; then
+    max_uid="$DEFAULT_MAX_UID"
+fi
+if [ -z "$oom_adj" ]; then
+    oom_adj="$DEFAULT_OOM_ADJ"
+fi
+
+# either print command (echo) or execute (eval) it
+if [ -z "$maybe" ]; then
+    maybe=eval
+fi
+
+ps -e -o pid,uid,ruser,cmd,command -ww --no-headers | ( \
+    while read pid uid ruser cmd command; do
+        if expr match "$command" '^\[' >/dev/null; then
+            log 1 "Process $pid ('$cmd') is an in-kernel process; skipping it."
+            continue
+        fi
+        if [ "$uid" -lt "$max_uid" ]; then
+            current_oom_adj=$(cat "/proc/$pid/oom_adj")
+            if [ -z "$current_oom_adj" ]; then
+                # the process has finished and disappeared while we
+                # were running, so skip it
+                continue
+            fi
+            log 2 "Examining process $pid ('$cmd'), owned by user '$ruser' ..."
+            if [ "$current_oom_adj" -ne "$oom_adj" ]; then
+                log 1 "Process $pid's current 'oom_adj' value is $current_oom_adj, setting it to $oom_adj instead."
+                $maybe echo "$oom_adj" '>' "/proc/$pid/oom_adj"
+            else
+                log 2 "Process $pid's current 'oom_adj' value is already $oom_adj, nothing to do."
+            fi
+        fi
+    done
+)
