@@ -57,7 +57,7 @@ is_absolute_path () {
 }
 
 
-## parse command-line 
+## parse command-line
 
 short_opts='an:h'
 long_opts='all,lines:,help'
@@ -72,7 +72,7 @@ if [ "x$(getopt -T)" != 'x--' ]; then
     eval set -- $args
 else
     # old-style getopt, use compatibility syntax
-    args=$(getopt "$short_opts" "$@") 
+    args=$(getopt "$short_opts" "$@")
     if [ $? -ne 0 ]; then
         die 1 "Type '$PROG --help' to get usage information."
     fi
@@ -95,8 +95,8 @@ var=$1
 
 require_command ssh
 
-for host in "$@"; do 
+for host in "$@"; do
     echo "==== ${host} ===="
-    echo -e "set /HOST/console lines=${lines}\nshow /HOST/console/history\nexit" \
+    echo -e "set /HOST/console line_count=${lines}\nshow /HOST/console/history\nexit" \
         | ssh sc${host}
 done
