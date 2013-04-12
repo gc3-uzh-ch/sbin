@@ -1,7 +1,7 @@
 /**
  * @file   usemem.c
  *
- * Consume a specified amount of main memory.
+ * Helper program to trigger Linux OOM conditions.
  *
  * @author  Riccardo Murri <riccardo.murri@gmail.com>
  * @version 1.0
@@ -38,8 +38,33 @@
 
 /* defaults */
 long chunksize = (4 * 1024 * 1024); /* default 4MB */
-int verbose = 1;
 int cpu_time = 0;
+int verbose = 1;
+
+
+void usage()
+{
+ printf("Usage: oom [options] AMOUNT\n"
+        "\n"
+        "Helper program to generate Linux OOM conditions.\n"
+        "Allocates AMOUNT bytes of virtual memory and makes sure they are fully\n"
+        "utilized.\n"
+        "\n"
+        "Options:\n"
+        "\n"
+        "  --chunksize, -c NUM\n"
+        "        Increase memory usage in chunks of NUM bytes at a time.\n"
+        "        (By default, increase memory usage by 4MB each iteration.)\n"
+        "\n"
+        "  --cpu-time, -t NUM\n"
+        "        Keep the CPU busy for NUM seconds before starting to allocate\n"
+        "        memory.  This option is provided since the Linux OOM killer\n"
+        "        prefers to kill processes with low CPU usage.\n"
+        "\n"
+        "  --brief\n"
+        "        Do not print any informational message about what the program is doing.\n"
+        );
+}
 
 
 int alarm_rang = 0;
@@ -66,12 +91,13 @@ main(const int argc, char * const argv[])
           {"brief",       no_argument,       &verbose, 0},
           {"chunksize",   required_argument, 0,        'c'},
           {"cpu-time",    required_argument, 0,        't'},
+          {"help",        no_argument,       0,        'h'},
           {0, 0, 0, 0}
         };
 
       /* getopt_long stores the option index here. */
       int option_index;
-      c = getopt_long(argc, argv, "c:t:", long_options, &option_index);
+      c = getopt_long(argc, argv, "c:ht:", long_options, &option_index);
 
       /* Detect the end of the options. */
       if (c == -1)
@@ -86,6 +112,11 @@ main(const int argc, char * const argv[])
 
         case 'c':
           chunksize = strtoul(optarg, NULL, 0);
+          break;
+
+        case 'h':
+          usage();
+          exit(0);
           break;
 
         case 't':
