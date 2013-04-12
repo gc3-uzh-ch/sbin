@@ -156,7 +156,7 @@ main(const int argc, char * const argv[])
   /* fill in a chunk of memory with random data */
   chunk = calloc(chunksize, 1);
   if (NULL == chunk) {
-    fprintf(stderr, "Cannot allocate memory: %s\n", strerror(errno));
+    fprintf(stderr, "Cannot allocate memory chunk of %lu bytes, aborting.\n", chunksize);
     abort();
   };
 
@@ -170,7 +170,7 @@ main(const int argc, char * const argv[])
   /* now allocate memory and start filling it */
   mem = malloc(size);
   if (NULL == mem) {
-    fprintf(stderr, "Cannot allocate memory: %s\n", strerror(errno));
+    fprintf(stderr, "Cannot allocate main memory segment of %lu bytes, aborting.\n", size);
     abort();
   };
 
