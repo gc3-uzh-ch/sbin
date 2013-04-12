@@ -29,18 +29,26 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <getopt.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/stat.h>
-#include <sys/types.h>
+#include <unistd.h>
 
 
 /* defaults */
 long chunksize = (4 * 1024 * 1024); /* default 4MB */
 int verbose = 1;
+int cpu_time = 0;
 
-int
+
+int alarm_rang = 0;
+
+void sigalrm(int signum) {
+  alarm_rang = 1;
+}
+
+
 main(const int argc, char * const argv[])
 {
   int c;
@@ -57,12 +65,13 @@ main(const int argc, char * const argv[])
           {"verbose",     no_argument,       &verbose, 1},
           {"brief",       no_argument,       &verbose, 0},
           {"chunksize",   required_argument, 0,        'c'},
+          {"cpu-time",    required_argument, 0,        't'},
           {0, 0, 0, 0}
         };
 
       /* getopt_long stores the option index here. */
       int option_index;
-      c = getopt_long(argc, argv, "c:", long_options, &option_index);
+      c = getopt_long(argc, argv, "c:t:", long_options, &option_index);
 
       /* Detect the end of the options. */
       if (c == -1)
@@ -79,8 +88,8 @@ main(const int argc, char * const argv[])
           chunksize = strtoul(optarg, NULL, 0);
           break;
 
-        case 'p':
-          printf("option -p with value `%s'\n", optarg);
+        case 't':
+          cpu_time = strtoul(optarg, NULL, 0);
           break;
 
         case '?':
@@ -94,6 +103,24 @@ main(const int argc, char * const argv[])
 
   /* amount of memory is 1st arg */
   size = strtoul(argv[optind], NULL, 0);
+
+  /* waste cpu time for the specified number of seconds */
+  if (cpu_time) {
+    float x = 0;
+    float n = 1.0;
+    printf("Wasting %u seconds of CPU time by busy-waiting ...\n", cpu_time);
+    /* set up our signal handler to catch SIGALRM */
+    signal(SIGALRM, sigalrm);
+    alarm(cpu_time);
+    while (! alarm_rang) {
+      x += 1/(n*n);
+      n += 1;
+      if (n > 1000000000) {
+        x = 0;
+        n = 1.0;
+      };
+    };
+  };
 
   /* fill in a chunk of memory with random data */
   chunk = calloc(chunksize, 1);
