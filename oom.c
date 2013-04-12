@@ -37,8 +37,9 @@
 
 
 /* defaults */
-long chunksize = (4 * 1024 * 1024); /* default 4MB */
+size_t chunksize = (4 * 1024 * 1024); /* default 4MB */
 int cpu_time = 0;
+int np = 1;
 int verbose = 1;
 
 
@@ -61,6 +62,11 @@ void usage()
         "        memory.  This option is provided since the Linux OOM killer\n"
         "        prefers to kill processes with low CPU usage.\n"
         "\n"
+        "  --processes, -p NUM\n"
+        "        Spawn NUM processes that try to allocate and use memory in parallel.\n"
+        "        By default, only one process is created, which means that you cannot\n"
+        "        allocate more memory than the `vm.overcommit_ratio` Linux setting allows.\n"
+        "\n"
         "  --quiet\n"
         "        Do not print any informational message about what the program is doing.\n"
         );
@@ -77,6 +83,7 @@ void sigalrm(int signum) {
 main(const int argc, char * const argv[])
 {
   int c;
+  int p = 0;
   int fd;
   char* chunk;
   char* mem;
@@ -91,13 +98,14 @@ main(const int argc, char * const argv[])
           {"quiet",       no_argument,       &verbose, 0},
           {"chunksize",   required_argument, 0,        'c'},
           {"cpu-time",    required_argument, 0,        't'},
+          {"processes",   required_argument, 0,        'p'},
           {"help",        no_argument,       0,        'h'},
           {0, 0, 0, 0}
         };
 
       /* getopt_long stores the option index here. */
       int option_index;
-      c = getopt_long(argc, argv, "c:ht:", long_options, &option_index);
+      c = getopt_long(argc, argv, "c:hp:t:", long_options, &option_index);
 
       /* Detect the end of the options. */
       if (c == -1)
@@ -119,6 +127,10 @@ main(const int argc, char * const argv[])
           exit(0);
           break;
 
+        case 'p':
+          np = strtoul(optarg, NULL, 0);
+          break;
+
         case 't':
           cpu_time = strtoul(optarg, NULL, 0);
           break;
@@ -135,14 +147,38 @@ main(const int argc, char * const argv[])
   /* amount of memory is 1st arg */
   size = strtoul(argv[optind], NULL, 0);
 
+  /* allocate memory */
+  mem = malloc(size);
+  if (NULL == mem) {
+    fprintf(stderr, "Cannot allocate main memory segment of %lu bytes, aborting.\n", size);
+    abort();
+  };
+
+  /* fork aux processes */
+  setpgid(0, 0); /* create new process group */
+  for (p=1; p < np; ++p) {
+    int rc = fork();
+    if (-1 == rc) {
+      fprintf(stderr, "Cannot create auxiliary process #%d, aborting.\n", p);
+      kill(0, SIGTERM); /* kill process group */
+      abort();
+    }
+    else if (0 == rc) {
+      /* child process does not need to fork */
+      break;
+    };
+  };
+
   /* waste cpu time for the specified number of seconds */
   if (cpu_time) {
     float x = 0;
     float n = 1.0;
-    printf("Wasting %u seconds of CPU time by busy-waiting ...\n", cpu_time);
+    printf("[#%d] Wasting %u seconds of CPU time by busy-waiting ...\n", p, cpu_time);
     /* set up our signal handler to catch SIGALRM */
     signal(SIGALRM, sigalrm);
     alarm(cpu_time);
+    /* need to do some real work here,
+       otherwise the compiler could optimize the loop away... */
     while (! alarm_rang) {
       x += 1/(n*n);
       n += 1;
@@ -156,24 +192,18 @@ main(const int argc, char * const argv[])
   /* fill in a chunk of memory with random data */
   chunk = calloc(chunksize, 1);
   if (NULL == chunk) {
-    fprintf(stderr, "Cannot allocate memory chunk of %lu bytes, aborting.\n", chunksize);
+    fprintf(stderr, "[#%d] Cannot allocate memory chunk of %lu bytes, aborting.\n", p, chunksize);
     abort();
   };
 
   fd = open("/dev/urandom", O_RDONLY);
   if (-1 == fd) {
-    fprintf(stderr, "Cannot open /dev/urandom: %s\n", strerror(errno));
+    fprintf(stderr, "[#%d] Cannot open /dev/urandom: %s. Aborting.\n", p, strerror(errno));
     abort();
   }
   read(fd, chunk, chunksize);
 
-  /* now allocate memory and start filling it */
-  mem = malloc(size);
-  if (NULL == mem) {
-    fprintf(stderr, "Cannot allocate main memory segment of %lu bytes, aborting.\n", size);
-    abort();
-  };
-
+  /* now fill memory */
   remaining = size;
   while (remaining > 0) {
     if (remaining < chunksize) {
@@ -187,6 +217,14 @@ main(const int argc, char * const argv[])
   };
 
   if (verbose)
-    printf("Successfully written %lu bytes of RAM.\n", size);
+    printf("[#%d] Successfully written %lu bytes of RAM.\n", p, size);
+
+
+  while (np > 1) {
+    int status;
+    wait(&status);
+    np--;
+  };
+
   exit(0);
 }
