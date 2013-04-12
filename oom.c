@@ -176,7 +176,7 @@ main(const int argc, char * const argv[])
 
   remaining = size;
   while (remaining > 0) {
-    if (size < chunksize) {
+    if (remaining < chunksize) {
       chunksize = remaining;
       remaining = 0; /* last round */
     }
