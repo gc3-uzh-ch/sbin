@@ -61,7 +61,7 @@ void usage()
         "        memory.  This option is provided since the Linux OOM killer\n"
         "        prefers to kill processes with low CPU usage.\n"
         "\n"
-        "  --brief\n"
+        "  --quiet\n"
         "        Do not print any informational message about what the program is doing.\n"
         );
 }
@@ -88,7 +88,7 @@ main(const int argc, char * const argv[])
       static struct option long_options[] =
         {
           {"verbose",     no_argument,       &verbose, 1},
-          {"brief",       no_argument,       &verbose, 0},
+          {"quiet",       no_argument,       &verbose, 0},
           {"chunksize",   required_argument, 0,        'c'},
           {"cpu-time",    required_argument, 0,        't'},
           {"help",        no_argument,       0,        'h'},
