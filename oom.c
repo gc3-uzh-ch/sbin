@@ -69,13 +69,74 @@ void usage()
         "\n"
         "  --quiet\n"
         "        Do not print any informational message about what the program is doing.\n"
+        "\n"
         );
 }
 
 
+size_t
+parse_memory_size(const char* const arg)
+{
+  char* next = NULL;
+  size_t size = strtoul(arg, &next, 0);
+  int magnitude = 0;
+  int base = 1000;
+
+  if (arg == next)
+    goto error;
+
+  while ('\0' != *next) {
+    switch(*next) {
+    case 'G':
+    case 'g':
+      magnitude = 3;
+      break;
+
+    case 'M':
+    case 'm':
+      magnitude = 2;
+      break;
+
+    case 'K': /* accept 'K' as a prefix though it's not SI */
+    case 'k':
+      magnitude = 1;
+      break;
+
+    case 'B':
+    case 'b':
+      break;
+
+      /* accept 'MiB', 'KiB', etc. as the base-2 equivalents */
+    case 'i':
+      base = 1024;
+      break;
+
+    default:
+      goto error;
+    };
+
+    ++next;
+  };
+
+  while (magnitude-- > 0)
+    size *= base;
+
+  return size;
+
+ error:
+  fprintf(stderr,
+          "Cannot parse '%s' as a memory size."
+          " Please use an integer number, followed by GB, MB, kB.\n",
+          arg);
+  exit(1);
+}
+
+
+/* wake up timer */
 int alarm_rang = 0;
 
-void sigalrm(int signum) {
+void sigalrm(int signum)
+{
   alarm_rang = 1;
 }
 
@@ -119,7 +180,7 @@ main(const int argc, char * const argv[])
             break;
 
         case 'c':
-          chunksize = strtoul(optarg, NULL, 0);
+          chunksize = parse_memory_size(optarg);
           break;
 
         case 'h':
@@ -145,7 +206,7 @@ main(const int argc, char * const argv[])
     }
 
   /* amount of memory is 1st arg */
-  size = strtoul(argv[optind], NULL, 0);
+  size = parse_memory_size(argv[optind]);
 
   /* allocate memory */
   mem = malloc(size);
