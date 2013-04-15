@@ -150,6 +150,8 @@ main(const int argc, char * const argv[])
   char* mem;
   size_t size = 0;
   size_t remaining;
+  int successful = 0;
+  int killed = 0;
 
   while (1)
     {
@@ -281,10 +283,18 @@ main(const int argc, char * const argv[])
     printf("[#%d] Successfully written %lu bytes of RAM.\n", p, size);
 
 
-  while (np > 1) {
-    int status;
-    wait(&status);
-    np--;
+  if (np > 1 && p == np) {
+    while (np > 1) {
+      int status;
+      wait(&status);
+      if (WIFSIGNALED(status) && WTERMSIG(status) == SIGKILL)
+        ++killed;
+      else if (WIFEXITED(status) && WEXITSTATUS(status) == 0)
+        ++successful;
+      np--;
+    };
+    if (verbose)
+      printf("Done: %d processes successfully terminated, %d killed.\n", successful, killed);
   };
 
   exit(0);
