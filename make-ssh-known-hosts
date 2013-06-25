@@ -152,7 +152,7 @@ sub hosts2sshkeyscan (%) {
 
     my $result = [ ];
     foreach my $name (sort keys %addrs) {
-        push @$result, (join(',', keys %{$addrs{$name}}) .' '. join(',', keys %{$names{$name}}));
+        push @$result, (join(',', sort keys %{$addrs{$name}}) .' '. join(',', sort keys %{$names{$name}}));
     };
     return $result;
 }
