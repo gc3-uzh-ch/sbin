@@ -1,13 +1,13 @@
 #!/usr/bin/env perl
 #
 our $rcsid='$Id$';
-our $VERSION='1.0';
+our $VERSION='1.1';
 
 =pod
 
 =head1 NAME
 
-sample - Do something PERLish
+make-ssh-known-hosts - Harvest SSH keys
 
 =head1 SYNOPSIS
 
@@ -22,6 +22,11 @@ work.
 Options:
 
 =over 4
+
+=item -x, --exclude I<REGEX>
+
+Exclude hosts whose name matches I<REGEX>.  Note that I<REGEX> is only
+matched against a host's FQDN.
 
 =item -n, --no-act, --just-print
 
@@ -58,12 +63,14 @@ sub in ($@);
 # provide default for options
 my $verbose = 0;
 my $no_act = 0;
+my @exclude = ();
 Getopt::Long::Configure ('gnu_getopt', 'no_ignore_case');
 GetOptions (
-        'verbose|v:+' => \$verbose,
-        'no-act|dry-run|just-print|n!' => \$no_act,
-        'help' => sub { pod2usage(-verbose => $verbose); },
-        'version|V' => sub { print $PROGRAM_NAME .' '. $VERSION ."\n"; exit; }
+    'exclude|x=s' => \@exclude,
+    'help' => sub { pod2usage(-verbose => $verbose); },
+    'no-act|dry-run|just-print|n!' => \$no_act,
+    'verbose|v:+' => \$verbose,
+    'version|V' => sub { print $PROGRAM_NAME .' '. $VERSION ."\n"; exit; }
 ) or pod2usage();
 
 
@@ -75,7 +82,7 @@ push @hostfiles, '/etc/hosts' if ($#ARGV < 0);
 open KEYSCAN, "|-", "ssh-keyscan -t rsa,dsa,ecdsa -f -"
     or die "Cannot run 'ssh-keyscan'";
 
-foreach my $line (@{&hosts2sshkeyscan(@hostfiles)}) {
+foreach my $line (@{&hosts2sshkeyscan(hostfiles => \@hostfiles, exclude => \@exclude)}) {
     if ($no_act) {
         print "$line\n";
     } else {
@@ -95,12 +102,18 @@ close KEYSCAN;
 # is a comma-separated list of IP addresses, and each "names" is a
 # comma-separated list of host names.)
 #
-sub hosts2sshkeyscan (@) {
+sub hosts2sshkeyscan (%) {
+    my %parms = @_;
+    my @hostfiles = @{$parms{'hostfiles'} or []};
+    my @exclude = @{$parms{'exclude'} or []};
+
+
     my %addrs;
     my %names;
 
-    foreach my $filename (@_) {
+    foreach my $filename (@hostfiles) {
         open INPUT, "<$filename";
+      INPUT_LINE:
         while (<INPUT>) {
             chomp;
 
@@ -111,8 +124,12 @@ sub hosts2sshkeyscan (@) {
             my ($ipaddr, $fqdn, $aliases) = split(/\s+/, $_, 3);
 
             # ignore localhost and collective addresses
-            next if $ipaddr =~ m/^(127\.|::1|ff00::|fe00::0)/;
-            next if $fqdn =~ m/^ip6-all/;
+            next INPUT_LINE if $ipaddr =~ m/^(127\.|::1|ff00::|fe00::0)/;
+            next INPUT_LINE if $fqdn =~ m/^ip6-all/;
+
+            foreach my $excl (@exclude) {
+                next INPUT_LINE if $fqdn =~ m/$excl/;
+            }
 
             # use unqualified first name as join key
             my $name = (split(/\./, $fqdn))[0];
