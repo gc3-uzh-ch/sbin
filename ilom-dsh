@@ -2,27 +2,24 @@
 #
 PROG="$(basename $0)"
 
-## defaults
-lines=25
-
-
 ## usage and version text
 
 usage () {
 cat <<EOF
-Usage: $PROG [options] [HOST ...]
+Usage: $PROG [options] [-w TARGET] COMMAND [ARG ...]
 
-Show the last lines output to the ILOM SP serial console.
+Execute COMMAND on all the ILOM SPs of the hosts specified in the
+TARGET expression.  Output results in a format compatible with 'pdsh'.
 
 Options:
 
-  --all, -A   Show the whole recorded console history.
-              (May be very long!)
+  --user, -l NAME       Connect as user NAME.
+  --timeout, -t NUM     Time out connections after NUM seconds.
+  --targets, -w TARGET  Connect to hosts specified in the TARGET expression.
 
-  --lines, -n NUM
-              Only show the last NUM lines (default: $lines).
-
-  --help, -h  Print this help text.
+The TARGET expression should follow the same rules as for the 'pdsh'
+hostlist expressions -- see man page pdsh(1). If no '-w' option is
+given, then the target hosts list is the same selected by 'pdsh' option '-a'.
 
 EOF
 }
@@ -57,10 +54,11 @@ is_absolute_path () {
 }
 
 
-## parse command-line 
+## parse command-line
 
-short_opts='an:h'
-long_opts='all,lines:,help'
+
+short_opts='l:t:w:x'
+long_opts='debug,help,target:,timeout:,user:'
 
 if [ "x$(getopt -T)" != 'x--' ]; then
     # GNU getopt
@@ -72,7 +70,7 @@ if [ "x$(getopt -T)" != 'x--' ]; then
     eval set -- $args
 else
     # old-style getopt, use compatibility syntax
-    args=$(getopt "$short_opts" "$@") 
+    args=$(getopt "$short_opts" "$@")
     if [ $? -ne 0 ]; then
         die 1 "Type '$PROG --help' to get usage information."
     fi
@@ -81,22 +79,33 @@ fi
 
 while [ $# -gt 0 ]; do
     case "$1" in
-        --all|-a)   lines=0 ;;
-        --lines|-n) lines="$2"; shift ;;
-        --help|-h)  usage; exit 0 ;;
-        --)         shift; break ;;
+        --debug|-x)   set -x ;;
+        --help|-h)    usage; exit 0 ;;
+        --target|-w)  target="-w $2"; shift ;;
+        --timeout|-t) opt_t="-o ConnectTimeout=$2"; shift ;;
+        --user|-l)    opt_l="-l $2"; shift ;;
+        --)           shift; break ;;
     esac
     shift
 done
 
-var=$1
 
 ## main
 
+require_command pdsh
 require_command ssh
 
-for host in "$@"; do 
-    echo "==== ${host} ===="
-    echo -e "set /HOST/console lines=${lines}\nshow /HOST/console/history\nexit" \
-        | ssh sc${host}
+# TARGET defaults to '-a'
+if [ -z "$target" ]; then
+    target='-a'
+fi
+
+# gather host names
+hosts=$(exec pdsh -R exec -N $target echo '%h')
+
+# now run the actual command on ILOM SPs
+for host in $hosts; do
+    (echo "$@"; echo "exit") \
+        | ssh -T $opt_l $opt_t sc${host} \
+        | (while read line; do echo -n "${host}:"; echo "$line"; done)
 done
