@@ -1,0 +1,133 @@
+#! /bin/sh
+#
+PROG="$(basename $0)"
+
+
+## defaults
+
+format='short'
+
+
+## usage and version
+
+usage () {
+cat <<EOF
+Usage: $PROG [options] HOSTNAME [...]
+
+Convert long form of the host name (rXXcYYbZZnWW) to the node short name (nXXX).
+This translation is specific to the UZH Schroedinger cluster.
+
+Any number of HOSTNAMEs can be given on the command-line: the short node
+names will be outputted one per line.
+
+Example:
+
+  idesl-hostname-to-nodename r04c03b02n01
+
+Options:
+
+  --fqdn, -l  Print the fully-qualified host name.
+
+  --short, -s Print the host name without domain name.
+              This is the default.
+
+  --ipv4, -4  Print the IPv4 address of the node.
+
+  --help, -h  Print this help text.
+
+EOF
+}
+
+
+## helper functions
+die () {
+  rc="$1"
+  shift
+  (echo -n "$PROG: ERROR: ";
+      if [ $# -gt 0 ]; then echo "$@"; else cat; fi) 1>&2
+  exit $rc
+}
+
+warn () {
+  (echo -n "$PROG: WARNING: ";
+      if [ $# -gt 0 ]; then echo "$@"; else cat; fi) 1>&2
+}
+
+have_command () {
+  type "$1" >/dev/null 2>/dev/null
+}
+
+require_command () {
+  if ! have_command "$1"; then
+    die 1 "Could not find required command '$1' in system PATH. Aborting."
+  fi
+}
+
+is_absolute_path () {
+    expr match "$1" '/' >/dev/null 2>/dev/null
+}
+
+count_args () {
+    echo $#
+}
+
+
+## parse command-line
+
+short_opts='4hls'
+long_opts='fqdn,help,ipv4,long,short'
+
+if [ "x$(getopt -T)" != 'x--' ]; then
+    # GNU getopt
+    args=$(getopt --name "$PROG" --shell sh -l "$long_opts" -o "$short_opts" -- "$@")
+    if [ $? -ne 0 ]; then
+        die 1 "Type '$PROG --help' to get usage information."
+    fi
+    # use 'eval' to remove getopt quoting
+    eval set -- $args
+else
+    # old-style getopt, use compatibility syntax
+    args=$(getopt "$short_opts" "$@")
+    if [ $? -ne 0 ]; then
+        die 1 "Type '$PROG --help' to get usage information."
+    fi
+    set -- $args
+fi
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --fqdn|--long|-l) format='long' ;;
+        --ipv4|-4)        format='ipv4' ;;
+        --short|-s)       format='short'  ;;
+        --help|-h)        usage; exit 0 ;;
+        --)               shift; break ;;
+    esac
+    shift
+done
+
+## main
+
+require_command getent
+
+case "$format" in
+    long)
+        output () { while read ip hostname_domain nodename_domain; do echo $nodename_domain; done; }
+        ;;
+    short)
+        output () { while read ip hostname_domain nodename_domain; do echo $nodename_domain | cut -d. -f1; done; }
+        ;;
+    ipv4)
+        output () { while read ip hostname_domain nodename_domain; do echo $ip; done; }
+        ;;
+    *)
+        die 1 "BUG: Unexpected value '$format' for variable 'format'."
+        ;;
+esac
+
+nargs=$(count_args "$@")
+for nodename in "$@"; do
+    if [ $nargs -gt 1 ]; then
+        echo -n "${nodename}: "
+    fi
+    getent hosts "$nodename" | output
+done
