@@ -64,11 +64,15 @@ is_absolute_path () {
     expr match "$1" '/' >/dev/null 2>/dev/null
 }
 
+count_args () {
+    echo $#
+}
+
 
 ## parse command-line
 
-short_opts='hls'
-long_opts='fqdn,long,short,help'
+short_opts='4hls'
+long_opts='fqdn,ipv4,long,short,help'
 
 if [ "x$(getopt -T)" != 'x--' ]; then
     # GNU getopt
@@ -91,6 +95,7 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --fqdn|--long|-l) format='long' ;;
         --short|-s)       format='short'  ;;
+        --ipv4|-4)        format='ipv4' ;;
         --help|-h) usage; exit 0 ;;
         --) shift; break ;;
     esac
@@ -101,12 +106,25 @@ done
 
 require_command getent
 
-if [ "$format" = 'short' ]; then
-    filter='cut -d. -f1'
-else
-    filter='cat'
-fi
+case "$format" in
+    long)
+        output () { while read ip fqdn aliases; do echo $fqdn; done; }
+        ;;
+    short)
+        output () { while read ip fqdn aliases; do echo $fqdn | cut -d. -f1; done; }
+        ;;
+    ipv4)
+        output () { while read ip fqdn aliases; do echo $ip; done; }
+        ;;
+    *)
+        die 1 "BUG: Unexpected value '$format' for variable 'format'."
+        ;;
+esac
 
+nargs=$(count_args "$@")
 for nodename in "$@"; do
-    getent hosts "$nodename" | awk '{print $2;}' | $filter
+    if [ $nargs -gt 1 ]; then
+        echo -n "${nodename}: "
+    fi
+    getent hosts "$nodename" | output
 done
