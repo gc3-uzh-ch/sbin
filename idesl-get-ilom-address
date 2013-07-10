@@ -1,0 +1,149 @@
+#! /bin/sh
+#
+PROG="$(basename $0)"
+
+## defaults
+
+format='short'
+
+
+## usage and version
+
+usage () {
+cat <<EOF
+Usage: $PROG [options] HOSTNAME [...]
+
+Print the IP address of the management interface (ILOM SP) of the
+given nodes.  This translation is specific to the UZH Schroedinger
+cluster.
+
+Any number of HOSTNAMEs can be given on the command-line:
+names will be outputted one per line.
+
+Example:
+
+  idesl-nodename-to-hostname n237
+
+Options:
+
+  --fqdn, -l  Print the fully-qualified host name of the SP.
+
+  --short, -s Print the unqualified host name of the SP.
+
+  --ipv4, -4  Print the IPv4 address of the SP.  This is the default.
+
+  --help, -h  Print this help text.
+
+EOF
+}
+
+
+## helper functions
+die () {
+  rc="$1"
+  shift
+  (echo -n "$PROG: ERROR: ";
+      if [ $# -gt 0 ]; then echo "$@"; else cat; fi) 1>&2
+  exit $rc
+}
+
+warn () {
+  (echo -n "$PROG: WARNING: ";
+      if [ $# -gt 0 ]; then echo "$@"; else cat; fi) 1>&2
+}
+
+have_command () {
+  type "$1" >/dev/null 2>/dev/null
+}
+
+require_command () {
+  if ! have_command "$1"; then
+    die 1 "Could not find required command '$1' in system PATH. Aborting."
+  fi
+}
+
+is_absolute_path () {
+    expr match "$1" '/' >/dev/null 2>/dev/null
+}
+
+count_args () {
+    echo $#
+}
+
+
+## parse command-line
+
+short_opts='4hls'
+long_opts='fqdn,ipv4,help,long,short'
+
+if [ "x$(getopt -T)" != 'x--' ]; then
+    # GNU getopt
+    args=$(getopt --name "$PROG" --shell sh -l "$long_opts" -o "$short_opts" -- "$@")
+    if [ $? -ne 0 ]; then
+        die 1 "Type '$PROG --help' to get usage information."
+    fi
+    # use 'eval' to remove getopt quoting
+    eval set -- $args
+else
+    # old-style getopt, use compatibility syntax
+    args=$(getopt "$short_opts" "$@")
+    if [ $? -ne 0 ]; then
+        die 1 "Type '$PROG --help' to get usage information."
+    fi
+    set -- $args
+fi
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --fqdn|--hostname|-l) format='long' ;;
+        --short|-s)           format='short';;
+        --ipv4|-4)            format='ipv4' ;;
+        --help|-h)            usage; exit 0 ;;
+        --)                   shift; break ;;
+    esac
+    shift
+done
+
+
+## main
+
+require_command getent
+
+case "$format" in
+    long)
+        output () { while read ip fqdn aliases; do echo $fqdn; done; }
+        ;;
+    short)
+        output () { while read ip fqdn aliases; do echo $fqdn | cut -d. -f1; done; }
+        ;;
+    ipv4)
+        output () { while read ip fqdn aliases; do echo $ip; done; }
+        ;;
+    *)
+        die 1 "BUG: Unexpected value '$format' for variable 'format'."
+        ;;
+esac
+
+nargs=$(count_args "$@")
+for nodename in "$@"; do
+    # strip domain, if any
+    nodename=$(echo "$nodename" | cut -d. -f1)
+    if [ $nargs -gt 1 ]; then
+        echo -n "${nodename}: "
+    fi
+    # try `sc$nodename` ...
+    data=$(getent hosts "sc${nodename}")
+    if [ $? -eq 0 ]; then
+        echo "$data" | output
+        continue
+    fi
+    # ... else try with `NAME.mngt.es.hpcn.uzh.ch` ...
+    data=$(getent hosts "${nodename}.mngt.es.hpcn.uzh.ch")
+    if [ $? -eq 0 ]; then
+        echo "$data" | output
+        continue
+    fi
+    # else output warning
+    warn "Cannot resolve address of either 'sc$nodename' or '${nodename}.mngt.es.hpcn.uzh.ch'"
+    echo 'UNKNOWN'
+done

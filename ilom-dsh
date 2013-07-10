@@ -16,6 +16,7 @@ Options:
   --user, -l NAME       Connect as user NAME.
   --timeout, -t NUM     Time out connections after NUM seconds.
   --targets, -w TARGET  Connect to hosts specified in the TARGET expression.
+  --ssh-option, -o ARG  Pass ARG as an additional option to 'ssh'.
   --verbose, -v         Report on connection attempts.
 
 The TARGET expression should follow the same rules as for the 'pdsh'
@@ -58,8 +59,8 @@ is_absolute_path () {
 ## parse command-line
 
 
-short_opts='l:t:vw:x'
-long_opts='debug,help,target:,timeout:,user:,verbose'
+short_opts='l:o:t:vw:x'
+long_opts='debug,help,target:,ssh-option:,timeout:,user:,verbose'
 
 if [ "x$(getopt -T)" != 'x--' ]; then
     # GNU getopt
@@ -80,13 +81,14 @@ fi
 
 while [ $# -gt 0 ]; do
     case "$1" in
-        --debug|-x)   set -x ;;
-        --help|-h)    usage; exit 0 ;;
-        --target|-w)  target="-w $2"; shift ;;
-        --timeout|-t) opt_t="-o ConnectTimeout=$2"; shift ;;
-        --user|-l)    opt_l="-l $2"; shift ;;
-        --verbose|-v) verbose='-v' ;;
-        --)           shift; break ;;
+        --debug|-x)      set -x ;;
+        --help|-h)       usage; exit 0 ;;
+        --ssh-option|-o) opt_o="$opt_o -o $2" ;;
+        --target|-w)     target="-w $2"; shift ;;
+        --timeout|-t)    opt_t="-o ConnectTimeout=$2"; shift ;;
+        --user|-l)       opt_l="-l $2"; shift ;;
+        --verbose|-v)    verbose='-v' ;;
+        --)              shift; break ;;
     esac
     shift
 done
@@ -107,10 +109,12 @@ hosts=$(exec pdsh -R exec -N $target echo '%h')
 
 # now run the actual command on ILOM SPs
 for host in $hosts; do
+    # FIXME: IDESL-specific
+    sp=$(idesl-get-ilom-address "$host")
     if [ -n "$verbose" ]; then
-        echo 1>&2 "Connecting to host '$host' ..."
+        echo 1>&2 "Connecting to host '$sp' with 'ssh -T $opt_o $opt_l $opt_t $sp' ..."
     fi
     (echo "$@"; echo "exit") \
-        | ssh -T $opt_l $opt_t sc${host} \
+        | ssh -T $opt_o $opt_l $opt_t $sp \
         | (while read line; do echo -n "${host}:"; echo "$line"; done)
 done
