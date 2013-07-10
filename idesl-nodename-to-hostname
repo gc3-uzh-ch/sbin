@@ -67,7 +67,7 @@ is_absolute_path () {
 
 ## parse command-line
 
-short_opts='fsh'
+short_opts='hls'
 long_opts='fqdn,long,short,help'
 
 if [ "x$(getopt -T)" != 'x--' ]; then
@@ -89,8 +89,8 @@ fi
 
 while [ $# -gt 0 ]; do
     case "$1" in
-        --fqdn|--long|-l) format='short' ;;
-        --short|-s)       format='long'  ;;
+        --fqdn|--long|-l) format='long' ;;
+        --short|-s)       format='short'  ;;
         --help|-h) usage; exit 0 ;;
         --) shift; break ;;
     esac
