@@ -22,16 +22,10 @@ names will be outputted one per line.
 
 Example:
 
-  idesl-hostname-to-nodename r04c03b02n01
+  > idesl-hostname-to-nodename r02c03b02n01
+  n122
 
 Options:
-
-  --fqdn, -l  Print the fully-qualified host name.
-
-  --short, -s Print the host name without domain name.
-              This is the default.
-
-  --ipv4, -4  Print the IPv4 address of the node.
 
   --help, -h  Print this help text.
 
@@ -74,8 +68,8 @@ count_args () {
 
 ## parse command-line
 
-short_opts='4hls'
-long_opts='fqdn,help,ipv4,long,short'
+short_opts='h'
+long_opts='help'
 
 if [ "x$(getopt -T)" != 'x--' ]; then
     # GNU getopt
@@ -96,9 +90,6 @@ fi
 
 while [ $# -gt 0 ]; do
     case "$1" in
-        --fqdn|--long|-l) format='long' ;;
-        --ipv4|-4)        format='ipv4' ;;
-        --short|-s)       format='short'  ;;
         --help|-h)        usage; exit 0 ;;
         --)               shift; break ;;
     esac
@@ -107,27 +98,21 @@ done
 
 ## main
 
-require_command getent
-
-case "$format" in
-    long)
-        output () { while read ip hostname_domain nodename_domain; do echo $nodename_domain; done; }
-        ;;
-    short)
-        output () { while read ip hostname_domain nodename_domain; do echo $nodename_domain | cut -d. -f1; done; }
-        ;;
-    ipv4)
-        output () { while read ip hostname_domain nodename_domain; do echo $ip; done; }
-        ;;
-    *)
-        die 1 "BUG: Unexpected value '$format' for variable 'format'."
-        ;;
-esac
-
 nargs=$(count_args "$@")
-for nodename in "$@"; do
+for hostname in "$@"; do
     if [ $nargs -gt 1 ]; then
-        echo -n "${nodename}: "
+        echo -n "${hostname}: "
     fi
-    getent hosts "$nodename" | output
+    # extract location info from the host name
+    rack=$(echo $hostname    | cut -c2-3   | sed -e 's/^0//');
+    chassis=$(echo $hostname | cut -c5-6   | sed -e 's/^0//');
+    blade=$(echo $hostname   | cut -c8-9   | sed -e 's/^0//');
+    slot=$(echo $hostname    | cut -c11-12 | sed -e 's/^0//');
+    # renumber racks 6..8 to get the correct value for the numbering
+    if [ $rack -gt 3 ]; then
+        rack=$(( $rack - 2 ));
+    fi
+    # node number only makes sense if one looks at the picture on:
+    # https://hpcn.uzh.ch/schroedinger/status/
+    echo n$(( ($rack - 1) * 96 + (4 - $chassis) * 24 + ($slot - 1) * 12 + ($blade - 1) + 1 ));
 done
