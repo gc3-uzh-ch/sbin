@@ -98,5 +98,5 @@ require_command ssh
 for host in "$@"; do
     echo "==== ${host} ===="
     echo -e "set /HOST/console line_count=${lines}\nshow /HOST/console/history\nexit" \
-        | ssh $(idesl-get-ilom-address "$host")
+        | ssh -T $(idesl-get-ilom-address "$host")
 done
