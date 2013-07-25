@@ -1,0 +1,142 @@
+#! /bin/bash
+#
+PROG="$(basename $0)"
+
+## defaults
+
+# where all the auxiliary files are stored
+home=/usr/local/lib/ilom
+
+# root of the 32-bit Java installation (storage redirection does not
+# work on 64-bit Linux); note: Java 7 is *way* slower and buggy in
+# executing this ILOM code!
+export JAVA_HOME=${home}/jre1.6.0_45
+
+# the console redirection starter; download it from a ILOM-enabled host
+# (Remote Control -> Redirection -> Launch Remote Console)
+console_jnlp=${home}/console-redir.jnlp
+
+
+## help/usage text
+
+usage () {
+cat <<EOF
+Usage: $PROG [options] HOST
+
+Start the ILOM console redirection on HOST.
+
+Options:
+
+  --password, -p PASSWD
+      Use string PASSWD to connect to the remote ILOM SP.
+
+  --help, -h
+      Print this help text.
+
+EOF
+}
+
+
+## helper functions
+die () {
+  rc="$1"
+  shift
+  (echo -n "$PROG: FATAL: ";
+      if [ $# -gt 0 ]; then echo "$@"; else cat; fi) 1>&2
+  exit $rc
+}
+
+warn () {
+  (echo -n "$PROG: WARNING: ";
+      if [ $# -gt 0 ]; then echo "$@"; else cat; fi) 1>&2
+}
+
+have_command () {
+  type "$1" >/dev/null 2>/dev/null
+}
+
+require_command () {
+  if ! have_command "$1"; then
+      die 1 "Could not find required command '$1' in system PATH. Aborting."
+  fi
+}
+
+is_absolute_path () {
+    expr match "$1" '/' >/dev/null 2>/dev/null
+}
+
+
+## parse command-line
+
+if [ -n "$IPMI_PASSWORD" ]; then
+    opt_s="-s '$IPMI_PASSWORD'"
+fi
+
+short_opts='hp:s:'
+long_opts='help,password:'
+
+if [ "x$(getopt -T)" != 'x--' ]; then
+    # GNU getopt
+    args=$(getopt --name "$PROG" --shell sh -l "$long_opts" -o "$short_opts" -- "$@")
+    if [ $? -ne 0 ]; then
+        die 1 "Type '$PROG --help' to get usage information."
+    fi
+    # use 'eval' to remove getopt quoting
+    eval set -- $args
+else
+    # old-style getopt, use compatibility syntax
+    args=$(getopt "$short_opts" "$@")
+    if [ $? -ne 0 ]; then
+        die 1 "Type '$PROG --help' to get usage information."
+    fi
+    set -- $args
+fi
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --password|-p|-s) opt_s="-s '$2'"; shift ;;
+        --help|-h) usage; exit 0 ;;
+        --) shift; break ;;
+    esac
+    shift
+done
+
+if [ $# -lt 1 ]; then
+    die 1 "Need to provide at least a HOST. Run '$PROG --help' to get extended usage help."
+fi
+
+
+## main
+
+# sanity checks
+
+if ! test -d "$home"; then
+    die 2 "Auxiliary files directory '$home' does not exist (or is not a directory). Please check configuration on top of file '$PROG'."
+fi
+
+if ! test -r "$console_jnlp"; then
+    die 2 "Cannot read redirection service JNLP file '$console_jnlp'. You can download it from a ILOM-enabled host (Remote Control -> Redirection -> Launch Remote Console)."
+fi
+
+
+# set the 32-bit Java environment: StorageRedir.jar is not compatible
+# with 64-bit Java (who said "write once run anywhere"?)
+export PATH=$JAVA_HOME/bin:$PATH
+
+require_command java
+require_command javaws
+require_command mktemp
+
+host=$(idesl-get-ilom-address "$1")
+jnlptmp=$(mktemp -t "${PROG}.${host}.jnlp.XXXXXX") \
+    || die 3 "Cannot create temporary file."
+trap "rm -f '$jnlptmp';" EXIT INT TERM
+
+# the JNLP embeds the name of the host where it was downloaded from in
+# several places; replace all those references
+orig=$(grep --only-matching -E 'codebase="https://[A-Za-z0-9_.-]+' "$console_jnlp" | cut -d / -f3)
+sed -e "s|${orig}|${host}|g" < "$console_jnlp" > "$jnlptmp"
+
+javaws "$jnlptmp"
+
+exit $?

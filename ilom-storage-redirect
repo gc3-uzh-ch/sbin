@@ -1,0 +1,245 @@
+#! /bin/bash
+#
+PROG="$(basename $0)"
+
+## defaults
+
+# where all the auxiliary files are stored
+home=/usr/local/lib/ilom
+
+# root of the 32-bit Java installation (storage redirection does not
+# work on 64-bit Linux); note: Java 7 is *way* slower and buggy in
+# executing this ILOM code!
+export JAVA_HOME=${home}/jre1.6.0_45
+
+# the redirection CLI jar file; download it from a ILOM-enabled host
+# (Remote Control -> Redirection -> Download Client)
+storage_redir_jar=${home}/StorageRedir.jar
+
+# the redirection service daemon; download it from a ILOM-enabled host
+# (Remote Control -> Redirection -> Launch Service)
+service_jnlp=${home}/storage-redir-service.jnlp
+
+
+## help/usage text
+
+usage () {
+cat <<EOF
+Usage: $PROG [options] {service|redirect} ACTION [ARG ...]
+
+Manage the ILOM storage redirection service on a ILOM node.
+
+Available ACTIONs for the 'redirect' target are:
+
+  start  Start CD-ROM redirection on HOST (1st arg) from the ISO image in FILE (2nd arg).
+  stop   Stop CD-ROM redirection on HOST (1st arg).
+  list   List all current redirections on HOST (1st arg).
+  help   Access the help text from the underlying StorageRedir.jar
+
+Available ACTIONs for the 'service' target are:
+
+  start  Start the redirection daemon (this is a prerequisite to actual redirection)
+  stop   Stop/kill the redirection daemon
+  status Check the redirection daemon service
+
+Options:
+
+  --password, -p PASSWD
+      Use string PASSWD to connect to the remote ILOM SP.
+
+  --help, -h
+      Print this help text.
+
+EOF
+}
+
+
+## helper functions
+die () {
+  rc="$1"
+  shift
+  (echo -n "$PROG: FATAL: ";
+      if [ $# -gt 0 ]; then echo "$@"; else cat; fi) 1>&2
+  exit $rc
+}
+
+warn () {
+  (echo -n "$PROG: WARNING: ";
+      if [ $# -gt 0 ]; then echo "$@"; else cat; fi) 1>&2
+}
+
+have_command () {
+  type "$1" >/dev/null 2>/dev/null
+}
+
+require_command () {
+  if ! have_command "$1"; then
+      die 1 "Could not find required command '$1' in system PATH. Aborting."
+  fi
+}
+
+is_absolute_path () {
+    expr match "$1" '/' >/dev/null 2>/dev/null
+}
+
+
+## parse command-line
+
+if [ -n "$IPMI_PASSWORD" ]; then
+    opt_s="-s '$IPMI_PASSWORD'"
+fi
+
+short_opts='hp:s:'
+long_opts='help,password:'
+
+if [ "x$(getopt -T)" != 'x--' ]; then
+    # GNU getopt
+    args=$(getopt --name "$PROG" --shell sh -l "$long_opts" -o "$short_opts" -- "$@")
+    if [ $? -ne 0 ]; then
+        die 1 "Type '$PROG --help' to get usage information."
+    fi
+    # use 'eval' to remove getopt quoting
+    eval set -- $args
+else
+    # old-style getopt, use compatibility syntax
+    args=$(getopt "$short_opts" "$@")
+    if [ $? -ne 0 ]; then
+        die 1 "Type '$PROG --help' to get usage information."
+    fi
+    set -- $args
+fi
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --password|-p|-s) opt_s="-s '$2'"; shift ;;
+        --help|-h) usage; exit 0 ;;
+        --) shift; break ;;
+    esac
+    shift
+done
+
+if [ $# -lt 2 ]; then
+    die 1 "Need to provide at least a TARGET (service|redirect) and an ACTION. Run '$PROG --help' to get usage help."
+fi
+
+
+## main
+
+# sanity checks
+
+if ! test -d "$home"; then
+    die 2 "Auxiliary files directory '$home' does not exist (or is not a directory). Please check configuration on top of file '$PROG'."
+fi
+
+if ! test -r "$storage_redir_jar"; then
+    die 2 "Cannot read storage redirection JAR file '$storage_redir_jar'. You can download it from a ILOM-enabled host (Remote Control -> Redirection -> Download Client)."
+fi
+
+if ! test -r "$storage_redir_jar"; then
+    die 2 "Cannot read redirection service JNLP file '$service_jnlp'. You can download it from a ILOM-enabled host (Remote Control -> Redirection -> Launch service)."
+fi
+
+
+# set the 32-bit Java environment: StorageRedir.jar is not compatible
+# with 64-bit Java (who said "write once run anywhere"?)
+export PATH=$JAVA_HOME/bin:$PATH
+
+require_command java
+require_command javaws
+require_command mktemp
+
+target="$1"
+action="$2"
+shift 2
+
+case "$target" in
+    s*) # service actions
+        case "$action" in
+            help)
+                echo "$PROG: Using JavaWS binary: $(which javaws)";
+                echo "$PROG: Using service starter file: '$service_jnlp'";
+                ;;
+            status)
+                java -jar $storage_redir_jar test-service
+                ;;
+            start)
+                if [ $# -le 1 ]; then
+                    die 1 <<EOF
+Usage: $PROG service start HOST
+
+Run '$PROG --help' for more extended usage help.
+EOF
+                fi
+                host=$(idesl-get-ilom-address "$1")
+                jnlptmp=$(mktemp -t "${PROG}.${host}.jnlp.XXXXXX") \
+                    || die 3 "Cannot create temporary file."
+                trap "rm -f '$jnlptmp';" EXIT INT TERM
+                dquot='""'
+                sed -r -e "s|codebase=${dquot}https://[A-Za-z0-9_.-]+|codebase=${dquot}https://${host}|" < "$service_jnlp" > "$jnlptmp"
+                javaws "$jnlptmp"
+                ;;
+            stop)
+                if [ $# -le 1 ]; then
+                    die 1 <<EOF
+Usage: $PROG service start HOST
+
+Run '$PROG --help' for more extended usage help.
+EOF
+                fi
+                host=$(idesl-get-ilom-address "$1")
+                pid=$(pgrep -f -- "-Djnlpx.origFilenameArg=.+/${PROG}.${host}.jnlp")
+                if [ -n "$pid" ]; then
+                    kill $pid
+                else
+                    die 3 "No running redirection service found."
+                fi
+                ;;
+            *)
+                die 1 "Unknown service action '$action'."
+                ;;
+        esac
+        ;;
+
+    r*) # redirect actions
+        case "$action" in
+            help)
+                echo "$PROG: Using Java binary: $(which java)"
+                echo "$PROG: Using redirection client JAR: $storage_redir_jar"
+                echo
+                java -jar $storage_redir_jar -h
+                ;;
+            list)
+                java -jar $storage_redir_jar list "$@"
+                ;;
+            start)
+                if [ $# -le 2 ]; then
+                    die 1 <<EOF
+Usage: $PROG redirect start HOST FILE
+
+Run '$PROG --help' for more extended usage help.
+EOF
+                fi
+                eval java -jar "'$storage_redir_jar'" \
+                    start -r cdrom -t "'$2'" -u root $opt_s \
+                    $(idesl-get-ilom-address "$1")
+                ;;
+            stop)
+                if [ $# -lt 1 ]; then
+                    die 1 <<EOF
+Usage: $PROG redirect stop HOST
+
+Run '$PROG --help' for more extended usage help.
+EOF
+                fi
+                eval java -jar "'$storage_redir_jar'" \
+                    stop -r cdrom           -u root $opt_s \
+                    $(idesl-get-ilom-address "$1")
+                ;;
+            *)
+                die 1 "Unknown redirect action '$action'."
+                ;;
+        esac
+        ;;
+esac
+
+exit 0
