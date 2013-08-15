@@ -1,7 +1,7 @@
 #!/usr/bin/env perl
 #
 our $rcsid='$Id$';
-our $VERSION='1.1';
+our $VERSION='1.2';
 
 =pod
 
@@ -52,12 +52,13 @@ See http://www.gnu.org/licenses/gpl.html for license details.
 
 use strict;
 use English;
+use warnings;
+
+use File::Temp ();
+use File::Temp qw/:seekable/;
 use Getopt::Long;
 use Pod::Usage;
-
-
-sub verbose ($$);
-sub in ($@);
+use Socket;
 
 
 # provide default for options
@@ -79,7 +80,9 @@ GetOptions (
 my @hostfiles = @ARGV;
 push @hostfiles, '/etc/hosts' if ($#ARGV < 0);
 
-open KEYSCAN, "|-", "ssh-keyscan -t rsa,dsa,ecdsa -f -"
+my $tmp = File::Temp->new(TEMPLATE => 'make-ssh-known-hosts.XXXXXX', TMPDIR => 1, UNLINK => 0);
+
+open KEYSCAN, "|-", "ssh-keyscan -t rsa,dsa,ecdsa -f - > " . $tmp->filename
     or die "Cannot run 'ssh-keyscan'";
 
 foreach my $line (@{&hosts2sshkeyscan(hostfiles => \@hostfiles, exclude => \@exclude)}) {
@@ -91,6 +94,26 @@ foreach my $line (@{&hosts2sshkeyscan(hostfiles => \@hostfiles, exclude => \@exc
 };
 
 close KEYSCAN;
+
+# now read back ssh-keyscan's output and add IP addresses
+open INTERMEDIATE, '<', $tmp->filename
+    or die "Cannot re-open intermediate file";
+while(<INTERMEDIATE>) {
+    chomp;
+    my ($names, $type, $key) = split;
+    my @names = split(/,/, $names);
+
+    my %ipaddrs;
+    foreach my $name (@names) {
+        my $ipstruct = gethostbyname($name);
+        my $ipaddr = inet_ntoa($ipstruct) if defined($ipstruct);
+        $ipaddrs{$ipaddr} = 1 if defined($ipaddr);
+    };
+    foreach my $ipaddr (keys %ipaddrs) {
+        push @names, $ipaddr;
+    };
+    print STDOUT join(',', @names) . " $type $key\n";
+};
 
 
 ## subroutines
@@ -143,8 +166,10 @@ sub hosts2sshkeyscan (%) {
                 $names{$name} = { };
             };
             $names{$name}{$fqdn} = 1;
-            foreach my $alias (split(/\s+/, $aliases)) {
-                ${$names{$name}}{$alias} = 1;
+            if ($aliases) {
+                foreach my $alias (split(/\s+/, $aliases)) {
+                    ${$names{$name}}{$alias} = 1;
+                };
             };
         };
         close INPUT;
@@ -155,27 +180,6 @@ sub hosts2sshkeyscan (%) {
         push @$result, (join(',', sort keys %{$addrs{$name}}) .' '. join(',', sort keys %{$names{$name}}));
     };
     return $result;
-}
-
-
-# verbose (LVL, MSG)
-#
-# Print MSG if LVL <= $verbose .
-#
-sub verbose ($$) {
-    my $lvl = shift;
-    my $msg = shift;
-    print $msg . "\n" if ($lvl <= $verbose);
-}
-
-
-# in (ITEM, LIST)
-#
-# return true if ITEM is 'eq' to some element in LIST
-#
-sub in ($@) {
-    my $item = shift;
-    return grep { $item eq $_ } @_;
 }
 
 
