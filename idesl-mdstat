@@ -1,0 +1,68 @@
+#! /usr/bin/env python
+#
+"""
+Report on the disk device to MD array mapping.
+
+Compares the actual state (as read from ``/proc/mdstat``)
+with the intended configuration (as read from
+``/usr/local/etc/mdadm.conf.ESPFS``).
+"""
+
+import re
+import sys
+
+
+# read intended array devices from /usr/local/etc/mdadm.conf.ESPFS
+intended = { }
+fd = open('/usr/local/etc/mdadm.conf.ESPFS')
+NODEV = len('/dev/')
+for line in fd:
+    line = line.strip()
+    if line.startswith('DEVICE'):
+        devs = line.split()[1:]
+    elif line.startswith('ARRAY'):
+        md = line.split()[1][NODEV:]
+        intended[md] = frozenset([ devname[NODEV:] for devname in devs])
+
+# read actual array devices from /proc/mdstat
+actual = { }
+CLEAN_MD_LINE = re.compile(r'\[[0-9]+\]')
+fd = open('/proc/mdstat')
+for line in fd:
+    line = line.strip()
+    if line.startswith('md'):
+        # md12 : active raid6 sdc[0] sdar[9] sdaj[8] sdt[7] sdl[6] sdd[5] sdaq[4] sdai[3] sdaa[2] sdk[1]
+        line = CLEAN_MD_LINE.sub('', line)
+        parts = line.split()
+        md = parts[0]
+        actual[md] = frozenset(parts[4:])
+
+# compare
+def names(seq):
+    return str.join(' ', seq)
+
+failed = 0
+for md in sorted(intended.keys()):
+    if md not in actual:
+        print("%s: NOT STARTED" % md)
+        failed += 1
+    elif actual[md] == intended[md]:
+        print ("%s: ok" % md)
+    else:
+        not_actual = intended[md] - actual[md]
+        not_intended = actual[md] - intended[md]
+        if len(not_intended) == 0:
+            print ("%s: MISSING DEVICE(S): %s" % (md, names(not_actual)))
+        elif len(not_actual) == 0:
+            print ("%s: UNEXPECTED DEVICE(S): %s" % (md, names(not_intended)))
+        elif len(actual[md]) == len(intended[md]):
+            print ("%s: SHOULD HAVE %s, HAS %s INSTEAD"
+                   % (md, names(not_actual), names(not_intended)))
+        failed +=1
+
+for md in sorted(actual.keys()):
+    if md not in intended:
+        print("%s: UNEXPECTED MD ARRAY!" % md)
+        failed += 1
+
+sys.exit(failed)
