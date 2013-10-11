@@ -1,0 +1,214 @@
+#! /bin/sh
+#
+PROG="$(basename $0)"
+
+usage () {
+cat <<EOF
+Usage: $PROG [options] username gecos
+
+Create user USERNAME with its home directory.
+
+This procedure is specific to the GC3's OCIKBFS LDAP server
+and should not be used elsewhere.
+
+Options:
+
+  --ssh-key, -s FILE
+     Use FILE as SSH public key file.
+
+  --password, -p HASH
+     Use HASH as the (crypted) password hash.  If this option is not
+     given, a random password will be used.
+
+  --uid, -u UIDNUM
+     Use this number as the account's UID and GID.  If this option is
+     not given, the UID/GID is automatically selected: we take the max
+     used UID and add +1 to it.
+
+  --test, -n
+      Do not make any modification to the system; just print what
+      would be done.
+
+  --help, -h  Print this help text.
+
+EOF
+}
+
+
+## helper functions
+die () {
+  rc="$1"
+  shift
+  (echo -n "$PROG: ERROR: ";
+      if [ $# -gt 0 ]; then echo "$@"; else cat; fi) 1>&2
+  exit $rc
+}
+
+warn () {
+  (echo -n "$PROG: WARNING: ";
+      if [ $# -gt 0 ]; then echo "$@"; else cat; fi) 1>&2
+}
+
+have_command () {
+  type "$1" >/dev/null 2>/dev/null
+}
+
+require_command () {
+  if ! have_command "$1"; then
+    die 1 "Could not find required command '$1' in system PATH. Aborting."
+  fi
+}
+
+is_absolute_path () {
+    expr match "$1" '/' >/dev/null 2>/dev/null
+}
+
+
+## auxiliary functions
+
+find_next_uid () {
+    getent passwd \
+        | cut -d: -f3 \
+        | sort -rn \
+        | perl -e 'while (<STDIN>) { if ($_ < 65534) { print (1 + $_); exit 0; }; };'
+}
+
+
+## parse command-line
+
+short_opts='hnp:s:u:x'
+long_opts='no-act,password:,ssh-key:,test,uid:,help,debug'
+
+if [ "x$(getopt -T)" != 'x--' ]; then
+    # GNU getopt
+    args=$(getopt --name "$PROG" --shell sh -l "$long_opts" -o "$short_opts" -- "$@")
+    if [ $? -ne 0 ]; then
+        die 1 "Type '$PROG --help' to get usage information."
+    fi
+    # use 'eval' to remove getopt quoting
+    eval set -- $args
+else
+    # old-style getopt, use compatibility syntax
+    args=$(getopt "$short_opts" "$@")
+    if [ $? -ne 0 ]; then
+        die 1 "Type '$PROG --help' to get usage information."
+    fi
+    set -- $args
+fi
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --password|-p) pwdhash="$2"; shift ;;
+        --ssh*|-s) ssh_pubkey="$2"; shift ;;
+        --uid|-u) uid="$2"; shift ;;
+        --no-act|--test|-n) maybe='echo' ;;
+        --debug|-x) set -x ;;
+        --help|-h) usage; exit 0 ;;
+        --) shift; break ;;
+    esac
+    shift
+done
+
+if [ "$#" -lt 2 ]; then
+    die 1 "Usage: ${PROG} username fullname [gecos]"
+fi
+
+username="$1"; shift
+fullname="$1"; shift
+gecos="$@"
+
+## main
+
+case "$(hostname)" in
+    ocikbfs*)
+        # ok, nothing to do
+        ;;
+    *)
+        die 3 "This script is specific to the OCIKBFS.uzh.ch LDAP servers."
+        ;;
+esac
+
+require_command ldapadd
+require_command mktemp
+require_command pwgen
+require_command sed
+require_command tar
+
+
+# if the script is interrupted, ensure we leave no cruft around
+trap "cleanup" INT TERM EXIT ABRT
+cleanup () {
+    $maybe rm -rf "/srv/nfs/${username}"
+    if [ -n "$tmp" ]; then
+        $maybe rm -f "$tmp"
+    fi
+}
+
+
+# create home directory, etc
+cd /srv/nfs/home \
+    || die 2 "Cannot change to NFS home directory"
+
+$maybe mkdir "${username}"
+(cd /etc/skel; tar -c .) | (cd "${username}"; $maybe tar -xpv)
+
+$maybe mkdir "${username}/.ssh"
+if [ -n "$ssh_pubkey" ]; then
+    cp "$ssh_pubkey" "${username}/.ssh/authorized_keys"
+fi
+
+
+# create LDAP user
+tmp=$(mktemp -t ${PROG}.XXXXXX.ldif) \
+    || die 1 "Cannot make temporary file"
+
+if [ -n "$uid" ]; then
+    uid=$(find_next_uid)
+fi
+
+if [ -n "$pwdhash" ]; then
+    password=$(pwgen --num-passwords=1 --secure 16)
+    echo "Using random password: ${password}"
+    pwdhash=$(echo "$password" | openssl passwd -1 -stdin)
+fi
+
+cat > $tmp <<EOF
+dn: uid=${username},ou=People,dc=gc3,dc=uzh,dc=ch
+uid: ${username}
+cn: ${fullname}
+objectClass: account
+objectClass: posixAccount
+objectClass: top
+userPassword: {crypt}$pwdhash
+loginShell: /bin/bash
+uidNumber: ${uid}
+gidNumber: ${uid}
+homeDirectory: /home/${username}
+gecos: ${fullname},${gecos}
+
+
+dn: cn=${username},ou=Group,dc=gc3,dc=uzh,dc=ch
+objectClass: posixGroup
+objectClass: top
+cn: ${username}
+userPassword: {crypt}x
+gidNumber: ${uid}
+memberUid: ${username}
+EOF
+
+#### FIXME: should update the `cleanup` procedure to remove the entry from LDAP??
+$maybe ldapadd -H ldap://ocikbfs.uzh.ch/ -D cn=root,dc=gc3,dc=uzh,dc=ch -y /etc/ldap.secret -f "$tmp"
+
+$maybe rm -f "$tmp"
+
+
+# fix permissions on home dir
+
+cd /srv/nfs/home
+$maybe chown ${username}:${username} "${username}"
+$maybe chmod u=rwx,g=rwsx,o=rx "${username}"
+$maybe chmod 0700 "${username}/.ssh"
+$maybe chmod 0600 "${username}/.ssh/authorized_keys"
+
+# all done, no cleanup necessary if we stop now
+trap "" EXIT INT ABRT TERM
