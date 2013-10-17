@@ -1,0 +1,144 @@
+#! /usr/bin/env python
+#
+"""
+Print the OST name hosting a given file.
+"""
+
+from glob import glob
+import socket
+import subprocess
+import sys
+
+# `subprocess.check_output` exists only since Python 2.7. backport it!
+try:
+    from subprocess import check_output, CalledProcessError
+except ImportError:
+    def check_output(*popenargs, **kwargs):
+        """
+        Run command with arguments and return its output as a string.
+
+        If the exit code was non-zero it raises a
+        ``CalledProcessError``.  The ``CalledProcessError`` object
+        will have the return code in the ``returncode`` attribute and
+        output in the ``output`` attribute.
+
+        The arguments are the same as for the ``Popen`` constructor.  Example::
+
+        >>> check_output(["ls", "-l", "/dev/null"])
+        'crw-rw-rw- 1 root root 1, 3 Oct 18  2007 /dev/null\n'
+
+        The ``stdout`` argument is not allowed as it is used internally.
+        To capture standard error in the result, use stderr=STDOUT.::
+
+        >>> check_output(["/bin/sh", "-c",
+        ...               "ls -l non_existent_file ; exit 0"],
+        ...              stderr=STDOUT)
+        'ls: non_existent_file: No such file or directory\n'
+        """
+        if 'stdout' in kwargs:
+            raise ValueError('stdout argument not allowed, it will be overridden.')
+        process = subprocess.Popen(stdout=subprocess.PIPE, *popenargs, **kwargs)
+        output, unused_err = process.communicate()
+        retcode = process.poll()
+        if retcode:
+            cmd = kwargs.get("args")
+            if cmd is None:
+                cmd = popenargs[0]
+            raise subprocess.CalledProcessError(retcode, cmd, output=output)
+        return output
+    from subprocess import CalledProcessError
+
+# auxiliary functions
+def lustre_get_obdidx(path):
+    """Call ``lfs getstripe`` and return the ``obdidx`` field from its output."""
+    # sample ``lfs getstripe`` output::
+    #
+    # murri@r01c04b02n01:~> lfs getstripe /lustre/ESPFS/scratch/psychologie/fliem/ZAC/logs/DSmat.lhab_1b2i_t1_raw.err
+    # /lustre/ESPFS/scratch/psychologie/fliem/ZAC/logs/DSmat.lhab_1b2i_t1_raw.err
+    # lmm_stripe_count:   1
+    # lmm_stripe_size:    1048576
+    # lmm_stripe_offset:  18
+    #   obdidx           objid		objid            group
+    #       18         4634499       0x46b783                0
+    #
+    lfs_getstripe_output = check_output(['lfs', 'getstripe', path], stderr=subprocess.STDOUT)
+    read_data_now = False
+    for line in lfs_getstripe_output.split('\n'):
+        line = line.strip()
+        if line.startswith('obdidx'):
+            read_data_now = True
+            continue
+        elif read_data_now:
+            obdidx, objid_dec, objid_hex, group = line.split()
+            read_data_now = False
+        else:
+            pass # ignore line
+    return int(obdidx)
+
+def lustre_get_ost_names():
+    """Call ``lfs osts`` and return a dictionary mapping `obdidx` (integer) to OST name."""
+    # sample ``lfs osts`` output::
+    #
+    # murri@login1:~> lfs osts
+    # OBDS:
+    # 0: ESPFS-OST0000_UUID ACTIVE
+    # 1: ESPFS-OST0001_UUID ACTIVE
+    # 2: ESPFS-OST0002_UUID ACTIVE
+    # ...
+    # 29: ESPFS-OST001d_UUID ACTIVE
+    # 30: ESPFS-OST001e_UUID ACTIVE
+    # 31: ESPFS-OST001f_UUID ACTIVE
+    #
+    lfs_osts_output = check_output(['lfs', 'osts'], stderr=subprocess.STDOUT)
+    ostnames = { }
+    for line in lfs_osts_output.split('\n'):
+        parts = line.split(None, 2)
+        if len(parts) < 3:
+            continue
+        obdidx = int(parts[0][:-1])
+        ostname, uuid = parts[1].split('_')
+        ostnames[obdidx] = ostname
+    return ostnames
+
+def lustre_get_ost_hostname(ostname, _cache={}):
+    if ostname not in _cache:
+        conn = glob('/proc/fs/lustre/osc/%s*/ost_conn_uuid' % ostname)
+        if len(conn) == 0:
+            hostname = '???'
+        else:
+            # `conn` has at least one element
+            try:
+                ipaddr, _ = open(conn[0], 'r').read().split('@')
+            except IOError, err:
+                sys.stderr.write("%s: cannot read file '%s': %s\n" % (sys.argv[0], conn[0], err))
+                hostname = '???'
+            try:
+                hostname, aliases, ipaddresses = socket.gethostbyaddr(ipaddr)
+            except socket.error:
+                sys.stderr.write("%s: cannot get host name for IP address %s\n" % (sys.argv[0], ipaddr))
+                hostname = ipaddr
+        _cache[ostname] = hostname
+    return _cache[ostname]
+
+
+# main
+
+try:
+    ostnames = lustre_get_ost_names()
+except CalledProcessError, err:
+        sys.stderr.write("%s: error running `lfs osts`: %s" % (sys.argv[0], err.output))
+        sys.exit(err.returncode)
+
+for path in sys.argv[1:]:
+    try:
+        obdidx = lustre_get_obdidx(path)
+    except CalledProcessError, err:
+        sys.stderr.write("%s: error running `lfs getstripe`: %s" % (path, err.output))
+        continue
+    except ValueError, err:
+        sys.stderr.write("%s: `lfs getstripe` returned unexpected value for `obdidx`: %s"
+                         % (path, err))
+        continue
+    ostname = ostnames[obdidx]
+    hostname = lustre_get_ost_hostname(ostname)
+    sys.stdout.write("%s: %s (%s)\n" % (path, ostname, hostname))
