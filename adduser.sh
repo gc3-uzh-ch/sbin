@@ -205,7 +205,7 @@ $maybe rm -f "$tmp"
 # fix permissions on home dir
 
 cd /srv/nfs/home
-$maybe chown ${username}:${username} "${username}"
+$maybe chown -R ${username}:${username} "${username}"
 $maybe chmod u=rwx,g=rwsx,o=rx "${username}"
 $maybe chmod 0700 "${username}/.ssh"
 $maybe chmod 0600 "${username}/.ssh/authorized_keys"
