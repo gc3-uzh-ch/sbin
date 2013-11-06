@@ -106,8 +106,8 @@ fi
 
 while [ $# -gt 0 ]; do
     case "$1" in
-        --download|-d)     ;;
-        --status|-s)       die 2 "Action '--status' is not yet implemented." ;;
+        --download|-d)     action='download' ;;
+        --status|-s)       action='status' ;;
         --download-url|-u) ILOM_DOWNLOAD_URL="$2"; shift ;;
         --normal)          ILOM_SNAPSHOT_TYPE=normal ;;
         --fruid)           ILOM_SNAPSHOT_TYPE=fruid ;;
@@ -125,12 +125,26 @@ var=$1
 
 require_command ssh
 
-if [ -z "$ILOM_DOWNLOAD_URL" ]; then
-    die 1 "No download URL specified. Plase set one with the '--download-url' command-line option or the ILOM_DOWNLOAD_URL environment variable."
-fi
-
 for host in "$@"; do
-    echo "==== ${host} ===="
-    echo -e "set /SP/diag/snapshot dataset=${ILOM_SNAPSHOT_TYPE}\nset /SP/diag/snapshot dump_uri=${ILOM_DOWNLOAD_URL}\nexit" \
-        | ssh -T $(idesl-get-ilom-address "$host")
+    case "$action" in
+        download)
+            if [ -z "$ILOM_DOWNLOAD_URL" ]; then
+                die 1 "No download URL specified. Plase set one with the '--download-url' command-line option or the ILOM_DOWNLOAD_URL environment variable."
+            fi
+            echo "==== ${host} ===="
+            echo -e "set /SP/diag/snapshot dataset=${ILOM_SNAPSHOT_TYPE}\nset /SP/diag/snapshot dump_uri=${ILOM_DOWNLOAD_URL}\nexit" \
+                | ssh -T $(idesl-get-ilom-address "$host")
+            ;;
+        status)
+            echo -n "${host}: "
+            echo -e "show /SP/diag/snapshot\nexit" \
+                | ssh -T $(idesl-get-ilom-address "$host") \
+                | fgrep -A1 'result' \
+                | sed -r -e 's/^\s*result =\s+//' \
+                | tr '\n' '^' \
+                | sed -r -e 's/\^/: /g' \
+                | sed -r -e 's/:\s*$//'
+            echo
+            ;;
+    esac
 done
