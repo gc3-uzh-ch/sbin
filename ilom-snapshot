@@ -1,0 +1,136 @@
+#! /bin/sh
+#
+PROG="$(basename $0)"
+
+## defaults
+ILOM_SNAPSHOT_TYPE=${ILOM_SNAPSHOT_TYPE:-normal}
+
+
+## usage and version text
+
+usage () {
+cat <<EOF
+Usage: $PROG [-d|--download] [options] [HOST ...]
+       $PROG -s|--status [options] [HOST ...]
+
+Command that an ILOM snapshot be saved to a download URL, or report on
+the snapshot progress status.
+
+Action options:
+
+  --download, -d  Start downloading a snapshot to the given download URL.
+
+  --status, -s    Report on the download status.  Only one download per host
+                  may be active at a given time.
+
+Snapshot type options:
+
+  --normal        Normal ILOM snapshot. This is the default.
+
+  --fruid         Extended ILOM snapshot, including information
+                  about the FRUs configured on the server.
+
+  --full          Most comprehensive snapshot type. WARNING: may reset the OS!
+
+  --logonly       Specify this in addition to one of the options '--normal',
+                  '--fruid', or '--full' to get a snapshot containing
+                  only the log files.  NOTE: the '--logonly' option should
+                  follow other snapshot type options.
+
+Other options:
+
+  --download-url, -u URL
+                  Save the snapshot file to this URL.  The URL has the form
+                  'protocol://USERNAME:PASSWORD@HOST/DIR', where
+                  protocol is either 'sftp' or 'ftp'.
+
+                  Note that for sftp:// URLs, DIR is an absolute path from
+                  the root of the filesystem (contrary to what Oracle docs state).
+
+  --help, -h  Print this help text.
+
+EOF
+}
+
+
+## helper functions
+die () {
+  rc="$1"
+  shift
+  (echo -n "$PROG: ERROR: ";
+      if [ $# -gt 0 ]; then echo "$@"; else cat; fi) 1>&2
+  exit $rc
+}
+
+warn () {
+  (echo -n "$PROG: WARNING: ";
+      if [ $# -gt 0 ]; then echo "$@"; else cat; fi) 1>&2
+}
+
+have_command () {
+  type "$1" >/dev/null 2>/dev/null
+}
+
+require_command () {
+  if ! have_command "$1"; then
+    die 1 "Could not find required command '$1' in system PATH. Aborting."
+  fi
+}
+
+is_absolute_path () {
+    expr match "$1" '/' >/dev/null 2>/dev/null
+}
+
+
+## parse command-line
+
+short_opts='dhsu:'
+long_opts='download,download-url:,fruid,full,logonly,normal,status,help'
+
+if [ "x$(getopt -T)" != 'x--' ]; then
+    # GNU getopt
+    args=$(getopt --name "$PROG" --shell sh -l "$long_opts" -o "$short_opts" -- "$@")
+    if [ $? -ne 0 ]; then
+        die 1 "Type '$PROG --help' to get usage information."
+    fi
+    # use 'eval' to remove getopt quoting
+    eval set -- $args
+else
+    # old-style getopt, use compatibility syntax
+    args=$(getopt "$short_opts" "$@")
+    if [ $? -ne 0 ]; then
+        die 1 "Type '$PROG --help' to get usage information."
+    fi
+    set -- $args
+fi
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --download|-d)     ;;
+        --status|-s)       die 2 "Action '--status' is not yet implemented." ;;
+        --download-url|-u) ILOM_DOWNLOAD_URL="$2"; shift ;;
+        --normal)          ILOM_SNAPSHOT_TYPE=normal ;;
+        --fruid)           ILOM_SNAPSHOT_TYPE=fruid ;;
+        --full)            ILOM_SNAPSHOT_TYPE=full ;;
+        --logonly)         ILOM_SNAPSHOT_TYPE="${ILOM_SNAPSHOT_TYPE}-logonly" ;;
+        --help|-h)         usage; exit 0 ;;
+        --)                shift; break ;;
+    esac
+    shift
+done
+
+var=$1
+
+## main
+
+require_command ssh
+
+if [ -z "$ILOM_DOWNLOAD_URL" ]; then
+    die 1 "No download URL specified. Plase set one with the '--download-url' command-line option or the ILOM_DOWNLOAD_URL environment variable."
+fi
+
+for host in "$@"; do
+    echo "==== ${host} ===="
+    echo -e "set /SP/diag/snapshot dataset=${ILOM_SNAPSHOT_TYPE}\nset /SP/diag/snapshot dump_uri=${ILOM_DOWNLOAD_URL}\nexit" \
+        | ssh -T $(idesl-get-ilom-address "$host")
+done
