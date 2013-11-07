@@ -1,5 +1,8 @@
 #! /bin/sh
 #
+# WARNING: This utility depends on the `ilom-address` script, which
+# you MUST customize to your cluster environment.
+#
 PROG="$(basename $0)"
 
 ## defaults
@@ -137,12 +140,12 @@ for host in "$@"; do
             fi
             echo "==== ${host} ===="
             echo -e "set /SP/diag/snapshot dataset=${ILOM_SNAPSHOT_TYPE}\nset /SP/diag/snapshot dump_uri=${ILOM_DOWNLOAD_URL}\nexit" \
-                | ssh -T $(idesl-get-ilom-address "$host")
+                | ssh -T $(ilom-address "$host")
             ;;
         status)
             echo -n "${host}: "
             echo -e "show /SP/diag/snapshot\nexit" \
-                | ssh -T $(idesl-get-ilom-address "$host") \
+                | ssh -T $(ilom-address "$host") \
                 | grep -F -A1 'result' \
                 | sed -r -e 's/^\s*result =\s+//' \
                 | tr '\n' '^' \

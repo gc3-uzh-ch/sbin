@@ -1,5 +1,8 @@
 #! /bin/bash
 #
+# WARNING: This utility depends on the `ilom-address` script, which
+# you MUST customize to your cluster environment.
+#
 PROG="$(basename $0)"
 
 ## defaults
@@ -170,7 +173,7 @@ Usage: $PROG service start HOST
 Run '$PROG --help' for more extended usage help.
 EOF
                 fi
-                host=$(idesl-get-ilom-address "$1")
+                host=$(ilom-address "$1")
                 jnlptmp=$(mktemp -t "${PROG}.${host}.jnlp.XXXXXX") \
                     || die 3 "Cannot create temporary file."
                 trap "rm -f '$jnlptmp';" EXIT INT TERM
@@ -186,7 +189,7 @@ Usage: $PROG service start HOST
 Run '$PROG --help' for more extended usage help.
 EOF
                 fi
-                host=$(idesl-get-ilom-address "$1")
+                host=$(ilom-address "$1")
                 pid=$(pgrep -f -- "-Djnlpx.origFilenameArg=.+/${PROG}.${host}.jnlp")
                 if [ -n "$pid" ]; then
                     kill $pid
@@ -221,7 +224,7 @@ EOF
                 fi
                 eval java -jar "'$storage_redir_jar'" \
                     start -r cdrom -t "'$2'" -u root $opt_s \
-                    $(idesl-get-ilom-address "$1")
+                    $(ilom-address "$1")
                 ;;
             stop)
                 if [ $# -lt 1 ]; then
@@ -233,7 +236,7 @@ EOF
                 fi
                 eval java -jar "'$storage_redir_jar'" \
                     stop -r cdrom           -u root $opt_s \
-                    $(idesl-get-ilom-address "$1")
+                    $(ilom-address "$1")
                 ;;
             *)
                 die 1 "Unknown redirect action '$action'."

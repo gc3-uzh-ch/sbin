@@ -1,5 +1,8 @@
 #! /bin/sh
 #
+# WARNING: This utility depends on the `ilom-address` script, which
+# you MUST customize to your cluster environment.
+#
 PROG="$(basename $0)"
 
 ## usage and version text
@@ -109,8 +112,7 @@ hosts=$(exec pdsh -R exec -N $target echo '%h')
 
 # now run the actual command on ILOM SPs
 for host in $hosts; do
-    # FIXME: IDESL-specific
-    sp=$(idesl-get-ilom-address "$host")
+    sp=$(ilom-address "$host")
     if [ -n "$verbose" ]; then
         echo 1>&2 "Connecting to host '$sp' with 'ssh -T $opt_o $opt_l $opt_t $sp' ..."
     fi

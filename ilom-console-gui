@@ -1,5 +1,8 @@
 #! /bin/bash
 #
+# WARNING: This utility depends on the `ilom-address` script, which
+# you MUST customize to your cluster environment.
+#
 PROG="$(basename $0)"
 
 ## defaults
@@ -127,7 +130,7 @@ require_command java
 require_command javaws
 require_command mktemp
 
-host=$(idesl-get-ilom-address "$1")
+host=$(ilom-address "$1")
 jnlptmp=$(mktemp -t "${PROG}.${host}.jnlp.XXXXXX") \
     || die 3 "Cannot create temporary file."
 trap "rm -f '$jnlptmp';" EXIT INT TERM

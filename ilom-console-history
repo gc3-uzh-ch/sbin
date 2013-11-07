@@ -1,5 +1,8 @@
 #! /bin/sh
 #
+# WARNING: This utility depends on the `ilom-address` script, which
+# you MUST customize to your cluster environment.
+#
 PROG="$(basename $0)"
 
 ## defaults
@@ -98,5 +101,5 @@ require_command ssh
 for host in "$@"; do
     echo "==== ${host} ===="
     echo -e "set /HOST/console line_count=${lines}\nshow /HOST/console/history\nexit" \
-        | ssh -T $(idesl-get-ilom-address "$host")
+        | ssh -T $(ilom-address "$host")
 done

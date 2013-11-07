@@ -1,5 +1,10 @@
 #! /bin/sh
 #
+# WARNING: The actual address translation performed by this command is
+# specific to the UZH IDES "Schroedinger" cluster!! You MUST customize
+# this script to suit your cluster environment, because the other
+# `ilom-*` utilities depend on it.
+#
 PROG="$(basename $0)"
 
 ## defaults

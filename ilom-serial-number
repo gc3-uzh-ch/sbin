@@ -1,5 +1,8 @@
 #! /bin/sh
 #
+# WARNING: This utility depends on the `ilom-address` script, which
+# you MUST customize to your cluster environment.
+#
 PROG="$(basename $0)"
 
 usage () {
@@ -47,7 +50,7 @@ is_absolute_path () {
 }
 
 
-## parse command-line 
+## parse command-line
 
 short_opts='h'
 long_opts='help'
@@ -62,7 +65,7 @@ if [ "x$(getopt -T)" != 'x--' ]; then
     eval set -- $args
 else
     # old-style getopt, use compatibility syntax
-    args=$(getopt "$short_opts" "$@") 
+    args=$(getopt "$short_opts" "$@")
     if [ $? -ne 0 ]; then
         die 1 "Type '$PROG --help' to get usage information."
     fi
@@ -84,10 +87,10 @@ fi
 
 ## main
 
-for host in "$@"; do 
+for host in "$@"; do
     echo -n "${host}:"
     echo -e "show -d all /SYS\nexit"  \
-        | ssh -T sc"$1" \
+        | ssh -T $(ilom-address "$1") \
         | fgrep 'product_serial_number' \
         | cut -d= -f2
 done
