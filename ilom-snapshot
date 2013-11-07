@@ -23,21 +23,17 @@ Action options:
   --status, -s    Report on the download status.  Only one download per host
                   may be active at a given time.
 
-Snapshot type options:
+Snapshot-related options:
 
-  --normal        Normal ILOM snapshot. This is the default.
-
-  --fruid         Extended ILOM snapshot, including information
-                  about the FRUs configured on the server.
-
-  --full          Most comprehensive snapshot type. WARNING: may reset the OS!
-
-  --logonly       Specify this in addition to one of the options '--normal',
-                  '--fruid', or '--full' to get a snapshot containing
-                  only the log files.  NOTE: the '--logonly' option should
-                  follow other snapshot type options.
-
-Other options:
+  --type, -t TYPE Set snapshot type.  TYPE must be one of the following words:
+                  * "normal": Normal ILOM snapshot. This is the default.
+                  * "fruid":  Extended ILOM snapshot, including information
+                              about the FRUs configured on the server.
+                  * "full":   Most comprehensive snapshot type. WARNING:
+                              may reset the OS!
+                  * "normal-logonly", "fruid-logonly", "full-logonly":
+                              Like "normal", "fruid", "full", but the snapshot
+                              will contain only the log files.
 
   --download-url, -u URL
                   Save the snapshot file to this URL.  The URL has the form
@@ -46,6 +42,8 @@ Other options:
 
                   Note that for sftp:// URLs, DIR is an absolute path from
                   the root of the filesystem (contrary to what Oracle docs state).
+
+Other options:
 
   --help, -h  Print this help text.
 
@@ -84,8 +82,8 @@ is_absolute_path () {
 
 ## parse command-line
 
-short_opts='dhsu:'
-long_opts='download,download-url:,fruid,full,logonly,normal,status,help'
+short_opts='dhst:u:'
+long_opts='download,download-url:,status,type:,help'
 
 if [ "x$(getopt -T)" != 'x--' ]; then
     # GNU getopt
@@ -109,21 +107,27 @@ while [ $# -gt 0 ]; do
         --download|-d)     action='download' ;;
         --status|-s)       action='status' ;;
         --download-url|-u) ILOM_DOWNLOAD_URL="$2"; shift ;;
-        --normal)          ILOM_SNAPSHOT_TYPE=normal ;;
-        --fruid)           ILOM_SNAPSHOT_TYPE=fruid ;;
-        --full)            ILOM_SNAPSHOT_TYPE=full ;;
-        --logonly)         ILOM_SNAPSHOT_TYPE="${ILOM_SNAPSHOT_TYPE}-logonly" ;;
+        --type|-t)         ILOM_SNAPSHOT_TYPE="$2"; shift ;;
         --help|-h)         usage; exit 0 ;;
         --)                shift; break ;;
     esac
     shift
 done
 
-var=$1
 
-## main
+## sanity checks
 
 require_command ssh
+
+case "$ILOM_SNAPSHOT_TYPE" in
+    normal|normal-logonly) ;;
+    fruid|fruid-logonly) ;;
+    full|full-logonly) ;;
+    *) die 1 "Invalid snapshot type '$ILOM_SNAPSHOT_TYPE'. Valid values are: 'normal', 'fruid', 'full', 'normal-logonly', 'fruid-logonly', 'full-logonly'." ;;
+esac
+
+
+## main
 
 for host in "$@"; do
     case "$action" in
@@ -139,7 +143,7 @@ for host in "$@"; do
             echo -n "${host}: "
             echo -e "show /SP/diag/snapshot\nexit" \
                 | ssh -T $(idesl-get-ilom-address "$host") \
-                | fgrep -A1 'result' \
+                | grep -F -A1 'result' \
                 | sed -r -e 's/^\s*result =\s+//' \
                 | tr '\n' '^' \
                 | sed -r -e 's/\^/: /g' \
