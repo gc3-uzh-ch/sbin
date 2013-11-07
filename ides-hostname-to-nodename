@@ -22,7 +22,7 @@ names will be outputted one per line.
 
 Example:
 
-  > idesl-hostname-to-nodename r02c03b02n01
+  \$ ides-hostname-to-nodename r02c03b02n01
   n122
 
 Options:
