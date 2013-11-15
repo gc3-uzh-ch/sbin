@@ -1,0 +1,183 @@
+#! /usr/bin/env python
+"""
+List the hosts where a given job is running.
+"""
+
+import logging
+import os
+import subprocess
+import sys
+
+## auxiliary functions
+
+try:
+    from collections import defaultdict
+except ImportError:
+    class defaultdict(dict):
+        """
+        A backport of `defaultdict` to Python 2.4
+        See http://docs.python.org/library/collections.html
+
+        >>> dl = defaultdict(list)
+        >>> dl['emptylist']
+        []
+        >>> di = defaultdict(int)
+        >>> di['zero']
+        0
+        >>> ds = defaultdict(str)
+        >>> ds['empty']
+        ''
+
+        """
+        def __new__(cls, default_factory=None):
+            return dict.__new__(cls)
+        def __init__(self, default_factory):
+            self.default_factory = default_factory
+        def __missing__(self, key):
+            try:
+                return self.default_factory()
+            except:
+                raise KeyError("Key '%s' not in dictionary" % key)
+        def __getitem__(self, key):
+            if not dict.__contains__(self, key):
+                dict.__setitem__(self, key, self.__missing__(key))
+            return dict.__getitem__(self, key)
+
+
+def capture(cmd):
+    logging.info('Running: "%s" ...' % cmd)
+    proc = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    output = proc.communicate()[0]
+    return output
+
+
+def parse_qhost_output(text):
+    """
+    Parse output from `qhost -j` and return a dictionary mapping
+    job IDs into the list of SGE queues where each job is running.
+    """
+    jobs = defaultdict(list)
+    # omit the header lines
+    lines = text.split('\n')
+    for line in lines:
+        # skip header lines and inactive/unknown hosts
+        if (line.endswith('-') or line == '' or line.startswith('HOSTNAME') or line.startswith('   job-ID')):
+            continue
+        elif line.startswith(' '):
+            # continuation line
+            line = line.strip()
+            if line == '':
+                continue
+            if line[0].isdigit():
+                jobid, prior, name, user, state, day_started, time_started, queue, _ = line.split(None, 8)
+                assert '@' in queue
+                queuename, _ = queue.split('@', 1)
+                jobs[jobid].append((hostname, queuename))
+            else: 
+                # continuation line
+                queuename, _ = line.strip().split('@', 1)
+                jobs[jobid].append((hostname, queuename))
+        else:
+            hostname, arch, ncpu, load, memtot, memuse, swapto, swapus = line.strip().split()
+    return jobs
+
+
+def test_parse_qhost_output():
+    # extract from actual output on Schroedinger
+    jobs = parse_qhost_output("""
+HOSTNAME                ARCH         NCPU  LOAD  MEMTOT  MEMUSE  SWAPTO  SWAPUS
+-------------------------------------------------------------------------------
+global                  -               -     -       -       -       -       -
+r01c01b01n01            lx24-amd64      8  8.00   23.6G    1.0G    4.0G   29.2M
+r01c02b01n02            lx24-amd64      8  8.00   23.6G    5.9G    4.0G   10.5M
+   job-ID  prior   name       user         state submit/start at     queue      master ja-task-ID 
+   ----------------------------------------------------------------------------------------------
+   2526245 0.52470 tf-024     aseitson     r     01/31/2013 10:35:49 short.q@r0 SLAVE         
+                                                                     short.q@r0 SLAVE         
+                                                                     short.q@r0 SLAVE         
+                                                                     short.q@r0 SLAVE         
+                                                                     short.q@r0 SLAVE         
+                                                                     short.q@r0 SLAVE         
+                                                                     short.q@r0 SLAVE         
+                                                                     short.q@r0 SLAVE         
+r01c02b02n01            lx24-amd64      8  8.31   23.6G    7.9G    4.0G   25.8M
+                              """)
+    assert (jobs['2526245'] == ([('r01c02b01n02', 'short.q')] * 8))
+
+
+def summarize(hqs):
+    """
+    Scan a list of pairs (host, queue) and return a dictionary
+    counting occurence of each distinct one.
+
+    Examples::
+
+      >>> counts = summarize([ ('n90', 'short.q'), ('n90', 'short.q'), ('n91', 'long.q') ])
+      >>> for k, v in counts.iteritems(): print k, v
+      ...
+      ('n91', 'long.q') 1
+      ('n90', 'short.q') 2
+
+    """
+    count = defaultdict(int)
+    for hq in hqs:
+        count[hq] += 1
+    return count
+
+
+## main
+
+from optparse import OptionParser
+
+def main():
+    parser = OptionParser(usage="Usage: %prog [options] {JOBID|USERNAME}",
+                          version="%prog 1.0")
+    parser.add_option("-v", "--verbose",
+                      action="store_true",
+                      dest="verbose",
+                      default=False,
+                      help="Also print queue names.")
+    parser.add_option("-c", "--summarize",
+                      action="store_true",
+                      dest="summarize",
+                      default=False,
+                      help="Shorten list by collapsing equal entries.",)
+    parser.add_option("--selftest",
+                      action="store_true",
+                      dest="selftest",
+                      default=False,
+                      help="Run internal code tests and no other action.",)
+    (options, args) = parser.parse_args()
+
+    if options.selftest:
+        test_parse_qhost_output()
+
+        import doctest
+        doctest.testmod(name='sge_where',
+                        optionflags=doctest.NORMALIZE_WHITESPACE)
+        sys.exit(0)
+
+    if len(args) != 1:
+        logging.critical(
+            "Need only one argument, either JOBID or USERNAME."
+            " Please run this command with option `--help` to see read usage help.")
+        sys.exit(1)
+
+    # determine whether the argument is a JOBID or a USERNAME
+    arg = args[0]
+    if arg[0].isdigit():
+        # job id
+        qhost = capture('qhost -j')
+        jobs = parse_qhost_output(qhost)
+        for jobid in jobs:
+            if jobid != arg:
+                continue
+            for hostname, queuename in jobs[jobid]:
+                print ("%-12s %s" % (jobid, hostname))
+    else:
+        # username
+        qhost = capture('qhost -u %s' % arg)
+
+
+if __name__ == '__main__':
+    main()
