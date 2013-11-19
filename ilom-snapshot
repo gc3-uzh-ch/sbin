@@ -7,7 +7,7 @@ PROG="$(basename $0)"
 
 ## defaults
 ILOM_SNAPSHOT_TYPE=${ILOM_SNAPSHOT_TYPE:-normal}
-
+action="download"
 
 ## usage and version text
 
@@ -152,6 +152,9 @@ for host in "$@"; do
                 | sed -r -e 's/\^/: /g' \
                 | sed -r -e 's/:\s*$//'
             echo
+            ;;
+        *)
+            die 1 "Invalid action $action. Please re-run with '--download' or '--status' option."
             ;;
     esac
 done
