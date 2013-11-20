@@ -9,22 +9,22 @@ PROG="$(basename $0)"
 
 usage () {
 cat <<EOF
-Usage: $PROG [options] [-w TARGET] COMMAND [ARG ...]
+Usage: $PROG [options] {-a|-w TARGET} COMMAND [ARG ...]
 
 Execute COMMAND on all the ILOM SPs of the hosts specified in the
 TARGET expression.  Output results in a format compatible with 'pdsh'.
 
 Options:
 
-  --user, -l NAME       Connect as user NAME.
-  --timeout, -t NUM     Time out connections after NUM seconds.
-  --targets, -w TARGET  Connect to hosts specified in the TARGET expression.
+  --all, -a             Connect to all hosts known to 'pdsh'.
   --ssh-option, -o ARG  Pass ARG as an additional option to 'ssh'.
+  --targets, -w TARGET  Connect to hosts specified in the TARGET expression.
+  --timeout, -t NUM     Time out connections after NUM seconds.
+  --user, -l NAME       Connect as user NAME.
   --verbose, -v         Report on connection attempts.
 
 The TARGET expression should follow the same rules as for the 'pdsh'
-hostlist expressions -- see man page pdsh(1). If no '-w' option is
-given, then the target hosts list is the same selected by 'pdsh' option '-a'.
+hostlist expressions -- see man page pdsh(1).
 
 EOF
 }
@@ -62,8 +62,8 @@ is_absolute_path () {
 ## parse command-line
 
 
-short_opts='l:o:t:vw:x'
-long_opts='debug,help,target:,ssh-option:,timeout:,user:,verbose'
+short_opts='al:o:t:vw:x'
+long_opts='all,debug,help,target:,ssh-option:,timeout:,user:,verbose'
 
 if [ "x$(getopt -T)" != 'x--' ]; then
     # GNU getopt
@@ -84,6 +84,7 @@ fi
 
 while [ $# -gt 0 ]; do
     case "$1" in
+        --all|-a)        target='-a' ;;
         --debug|-x)      set -x ;;
         --help|-h)       usage; exit 0 ;;
         --ssh-option|-o) opt_o="$opt_o -o $2" ;;
@@ -102,9 +103,9 @@ done
 require_command pdsh
 require_command ssh
 
-# TARGET defaults to '-a'
+# If no TARGET given, abort.
 if [ -z "$target" ]; then
-    target='-a'
+    die 1 "Give a target set of hosts using the '-a' or '-w' option."
 fi
 
 # gather host names
