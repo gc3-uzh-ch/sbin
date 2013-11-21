@@ -90,7 +90,7 @@ fi
 for host in "$@"; do
     echo -n "${host}:"
     echo -e "show -d all /SYS\nexit"  \
-        | ssh -T $(ilom-address "$1") \
+        | ssh -T $(ilom-address "${host}") \
         | fgrep 'product_serial_number' \
         | cut -d= -f2
 done
