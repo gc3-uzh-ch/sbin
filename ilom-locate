@@ -1,0 +1,105 @@
+#! /bin/sh
+#
+# WARNING: This utility depends on the `ilom-address` script, which
+# you MUST customize to your cluster environment.
+#
+PROG="$(basename $0)"
+
+usage () {
+cat <<EOF
+Usage: $PROG [options] HOST [HOST ...]
+
+Turn the chassis locator light on or off
+(depending on options).
+
+Options:
+
+  --on, -1    Turn the locator light on (default).
+
+  --off, -0   Turn the locator light off.
+
+  --quiet, -q Do not echo ILOM commands to STDOUT.
+
+  --help, -h  Print this help text.
+
+EOF
+}
+
+
+## helper functions
+die () {
+  rc="$1"
+  shift
+  (echo -n "$PROG: ERROR: ";
+      if [ $# -gt 0 ]; then echo "$@"; else cat; fi) 1>&2
+  exit $rc
+}
+
+warn () {
+  (echo -n "$PROG: WARNING: ";
+      if [ $# -gt 0 ]; then echo "$@"; else cat; fi) 1>&2
+}
+
+have_command () {
+  type "$1" >/dev/null 2>/dev/null
+}
+
+require_command () {
+  if ! have_command "$1"; then
+    die 1 "Could not find required command '$1' in system PATH. Aborting."
+  fi
+}
+
+is_absolute_path () {
+    expr match "$1" '/' >/dev/null 2>/dev/null
+}
+
+
+## parse command-line
+
+short_opts='01hvq'
+long_opts='on,off,help,quiet'
+
+if [ "x$(getopt -T)" != 'x--' ]; then
+    # GNU getopt
+    args=$(getopt --name "$PROG" --shell sh -l "$long_opts" -o "$short_opts" -- "$@")
+    if [ $? -ne 0 ]; then
+        die 1 "Type '$PROG --help' to get usage information."
+    fi
+    # use 'eval' to remove getopt quoting
+    eval set -- $args
+else
+    # old-style getopt, use compatibility syntax
+    args=$(getopt "$short_opts" "$@")
+    if [ $? -ne 0 ]; then
+        die 1 "Type '$PROG --help' to get usage information."
+    fi
+    set -- $args
+fi
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --on|-1)    state='fast_blink' ;;  # indeed, it's not "on"
+        --off|-0)   state='off' ;;
+        --help|-h)  usage; exit 0 ;;
+        --quiet|-q) quietly='> /dev/null' ;;
+        --) shift; break ;;
+    esac
+    shift
+done
+
+if [ $# -eq 0 ]; then
+    die 1 "Please specify at least one host name on the command line."
+fi
+
+
+## main
+
+for host in "$@"; do
+    if [ -z "$quietly" ];  then
+        echo -n "${host}:"
+    fi
+    echo -e "set /SYS/LOCATE value=$state\nexit"  \
+        | ssh -T $(ilom-address "${host}") \
+        | eval cat $quietly
+done
