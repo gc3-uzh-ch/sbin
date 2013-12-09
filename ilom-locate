@@ -26,6 +26,14 @@ EOF
 }
 
 
+## defaults
+
+# by default, turn light on
+state='fast_blink'
+
+# verbose by default
+quietly=''
+
 ## helper functions
 die () {
   rc="$1"
@@ -96,10 +104,6 @@ fi
 ## main
 
 for host in "$@"; do
-    if [ -z "$quietly" ];  then
-        echo -n "${host}:"
-    fi
-    echo -e "set /SYS/LOCATE value=$state\nexit"  \
-        | ssh -T $(ilom-address "${host}") \
+    ilom-dsh -w "$(hostlist-to-pdsh "$@")" set /SYS/LOCATE "value=$state"  \
         | eval cat $quietly
 done
