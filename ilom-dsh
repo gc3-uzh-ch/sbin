@@ -21,6 +21,7 @@ Options:
   --targets, -w TARGET  Connect to hosts specified in the TARGET expression.
   --timeout, -t NUM     Time out connections after NUM seconds.
   --user, -l NAME       Connect as user NAME.
+  --quiet, -q           Suppress any output except errors.
   --verbose, -v         Report on connection attempts.
 
 The TARGET expression should follow the same rules as for the 'pdsh'
@@ -62,8 +63,8 @@ is_absolute_path () {
 ## parse command-line
 
 
-short_opts='al:o:t:vw:x'
-long_opts='all,debug,help,target:,ssh-option:,timeout:,user:,verbose'
+short_opts='al:o:qt:vw:x'
+long_opts='all,debug,help,quiet,target:,ssh-option:,timeout:,user:,verbose'
 
 if [ "x$(getopt -T)" != 'x--' ]; then
     # GNU getopt
@@ -91,6 +92,7 @@ while [ $# -gt 0 ]; do
         --target|-w)     target="-w $2"; shift ;;
         --timeout|-t)    opt_t="-o ConnectTimeout=$2"; shift ;;
         --user|-l)       opt_l="-l $2"; shift ;;
+        --quiet|-q)      quietly=yes ;;
         --verbose|-v)    verbose='-v' ;;
         --)              shift; break ;;
     esac
@@ -119,5 +121,9 @@ for host in $hosts; do
     fi
     (echo "$@"; echo "exit") \
         | ssh -T $opt_o $opt_l $opt_t $sp \
-        | (while read line; do echo -n "${host}:"; echo "$line"; done)
+        | if [ -z "$quietly" ]; then \
+            (while read line; do echo -n "${host}:"; echo "$line"; done); \
+          else \
+            cat > /dev/null; \
+          fi
 done
