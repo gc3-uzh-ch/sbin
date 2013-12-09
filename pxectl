@@ -1,0 +1,198 @@
+#! /bin/sh
+#
+# Simple-minded script for managing PXELINUX' `pxelinux.cfg` directories.
+#
+PROG="$(basename $0)"
+
+usage () {
+cat <<EOF
+Usage: $PROG [options] avail
+       $PROG [options] list [HOST ...]
+       $PROG [options] boot FLAVOR HOST [HOST ...]
+       $PROG [options] del  HOST [HOST ...]
+
+Manage PXELINUX' 'pxelinux.cfg' directories.
+
+The 'avail' action prints a list of all the available boot files.
+
+The 'list' action outputs a table associating each HOST/IP with
+the corresponding boot file.
+
+The 'boot' action makes links so that the specified HOSTs will boot
+from the boot file named FLAVOR.
+
+With the 'del' action, remove PXE-boot links for all the specified
+HOSTs -- they will not be able to PXE-boot until the next invocation
+of '$PROG boot'.
+
+
+Options:
+
+  --dry-run, -n  Do not actually make any changes; just print
+                 what would have been done.
+
+  --verbose, -v  Verbosely report on filesystem operations.
+
+  --help, -h     Print this help text.
+
+EOF
+}
+
+
+## defaults
+
+PXECTL_BOOT_DIR=${PXECTL_BOOT_DIR:+'/tftpboot/pxelinux.cfg'}
+
+
+## helper functions
+die () {
+  rc="$1"
+  shift
+  (echo -n "$PROG: ERROR: ";
+      if [ $# -gt 0 ]; then echo "$@"; else cat; fi) 1>&2
+  exit $rc
+}
+
+warn () {
+  (echo -n "$PROG: WARNING: ";
+      if [ $# -gt 0 ]; then echo "$@"; else cat; fi) 1>&2
+}
+
+have_command () {
+  type "$1" >/dev/null 2>/dev/null
+}
+
+require_command () {
+  if ! have_command "$1"; then
+    die 1 "Could not find required command '$1' in system PATH. Aborting."
+  fi
+}
+
+is_absolute_path () {
+    expr match "$1" '/' >/dev/null 2>/dev/null
+}
+
+hex2ip () {
+    x1=$(echo "$1" | cut -c1-2)
+    x2=$(echo "$1" | cut -c3-4)
+    x3=$(echo "$1" | cut -c5-6)
+    x4=$(echo "$1" | cut -c7-8)
+    printf "%d.%d.%d.%d\n" "0x$x1" "0x$x2" "0x$x3" "0x$x4"
+}
+
+host2hex () {
+    ip=$(getent hosts "$1" | cut -d' ' -f1)
+    if ! [ -z "$ip" ]; then
+        ip2hex "$ip" | cut -d' ' -f3
+    fi
+}
+
+ip2hex () {
+    gethostip -x "$1"
+}
+
+
+## parse command-line
+
+short_opts='hnv'
+long_opts='dry-run,help,verbose'
+
+if [ "x$(getopt -T)" != 'x--' ]; then
+    # GNU getopt
+    args=$(getopt --name "$PROG" --shell sh -l "$long_opts" -o "$short_opts" -- "$@")
+    if [ $? -ne 0 ]; then
+        die 1 "Type '$PROG --help' to get usage information."
+    fi
+    # use 'eval' to remove getopt quoting
+    eval set -- $args
+else
+    # old-style getopt, use compatibility syntax
+    args=$(getopt "$short_opts" "$@")
+    if [ $? -ne 0 ]; then
+        die 1 "Type '$PROG --help' to get usage information."
+    fi
+    set -- $args
+fi
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --dry-run|-n) maybe='echo' ;;
+        --verbose|-v) verbose='-v' ;;
+        --help|-h) usage; exit 0 ;;
+        --) shift; break ;;
+    esac
+    shift
+done
+
+
+## actions
+
+avail () {
+    ls -1 *.boot | sed -e 's/\.boot$//'
+}
+
+
+list () {
+    find . -type l -iregex '[a-f0-9]+' -printf '%P %L\n' | ( \
+        while read hex boot; do
+            ip=$(hex2ip $hex)
+            hostname=$(getent hosts "$ip" | (read ip fqdn aliases; echo "$fqdn") )
+            if [ -z "$hostname" ]; then
+                warn "Cannot resolve IPv4 address '$ip' to a host name."
+                hostname="$ip"
+            fi
+            flavor=$(echo "$boot" | sed -e 's/\.boot$//')
+            echo "$hostname -> $flavor"
+        done)
+}
+
+
+del () {
+    for tgt in "$@"; do
+        hex=$(host2hex "$tgt")
+        if [ -z "$hex" ]; then
+            warn "Cannot get IPv4 address of host '$tgt' - skipping."
+            continue
+        fi
+        $maybe rm -f $verbose "$hex"
+    done
+}
+
+
+boot () {
+    flavor="$1"
+    shift
+    for tgt in "$@"; do
+        hex=$(host2hex "$tgt")
+        if [ -z "$hex" ]; then
+            warn "Cannot get IPv4 address of host '$tgt' - skipping."
+            continue
+        fi
+        if ! test -L "$hex"; then
+            backup="${hex}.$(date '+%Y-%m-%d.%H.%M').BAK"
+            warn "PXE boot file '$hex' is not a symbolic link; backing it up as '${backup}."
+            $maybe mv "$hex" "$backup"
+        fi
+        $maybe ln -s -f $verbose "${flavor}.boot" "$hex"
+    done
+}
+
+
+## main
+
+require_command getent
+require_command gethostip
+
+cd "$PXECTL_BOOT_DIR" \
+    || die 2 "Cannot change to PXELINUX configuration directory '$PXECTL_BOOT_DIR'."
+
+
+action="$1"
+shift
+case "$action" in
+    a*)    avail "$@" ;;
+    b*)    boot "$@" ;;
+    l*)    list "$@" ;;
+    rm|d*) del "$@" ;;
+    *) die 1 "Unknown action '$action'. Type '$PROG --help' to get usage help." ;;
+esac
