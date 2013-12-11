@@ -137,6 +137,10 @@ for nodename in "$@"; do
     if [ $nargs -gt 1 ]; then
         echo -n "${nodename}: "
     fi
+    # special case: `nXX` is translated using `ides-nodename-to-hostname`
+    if expr match " $nodename" 'n[0-9]\+' > /dev/null; then
+        nodename=$(ides-nodename-to-hostname "$nodename")
+    fi
     # try `sc$nodename` ...
     data=$(getent hosts "sc${nodename}")
     if [ $? -eq 0 ]; then
