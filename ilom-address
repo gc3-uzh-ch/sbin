@@ -138,7 +138,7 @@ for nodename in "$@"; do
         echo -n "${nodename}: "
     fi
     # special case: `nXX` is translated using `ides-nodename-to-hostname`
-    if expr match " $nodename" 'n[0-9]\+' > /dev/null; then
+    if expr match "$nodename" 'n[0-9]\+' > /dev/null; then
         nodename=$(ides-nodename-to-hostname "$nodename")
     fi
     # try `sc$nodename` ...
