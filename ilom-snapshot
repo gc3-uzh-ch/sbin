@@ -8,6 +8,8 @@ PROG="$(basename $0)"
 ## defaults
 ILOM_SNAPSHOT_TYPE=${ILOM_SNAPSHOT_TYPE:-normal}
 action="download"
+serv='SP'
+
 
 ## usage and version text
 
@@ -27,6 +29,14 @@ Action options:
                   may be active at a given time.
 
 Snapshot-related options:
+
+  --cmm           Alias for '--kind CMM'.
+
+  --kind, -k SERV Tell the command that is has to talk to a
+                  blade/server service processor (SERV is 'SP',
+                  default), or to a chassis management module (SERV is 'CMM').
+
+  --sp            Alias for '--kind SP'.
 
   --type, -t TYPE Set snapshot type.  TYPE must be one of the following words:
                   * "normal": Normal ILOM snapshot. This is the default.
@@ -85,8 +95,8 @@ is_absolute_path () {
 
 ## parse command-line
 
-short_opts='dhst:u:'
-long_opts='download,download-url:,status,type:,help'
+short_opts='dhk:st:u:'
+long_opts='cmm,download,download-url:,kind:,sp,status,type:,help'
 
 if [ "x$(getopt -T)" != 'x--' ]; then
     # GNU getopt
@@ -107,9 +117,12 @@ fi
 
 while [ $# -gt 0 ]; do
     case "$1" in
-        --download|-d)     action='download' ;;
-        --status|-s)       action='status' ;;
+        --cmm)             serv='CMM' ;;
         --download-url|-u) ILOM_DOWNLOAD_URL="$2"; shift ;;
+        --download|-d)     action='download' ;;
+        --kind|-k)         serv="$2"; shift ;;
+        --sp)              serv='SP' ;;
+        --status|-s)       action='status' ;;
         --type|-t)         ILOM_SNAPSHOT_TYPE="$2"; shift ;;
         --help|-h)         usage; exit 0 ;;
         --)                shift; break ;;
@@ -129,6 +142,11 @@ case "$ILOM_SNAPSHOT_TYPE" in
     *) die 1 "Invalid snapshot type '$ILOM_SNAPSHOT_TYPE'. Valid values are: 'normal', 'fruid', 'full', 'normal-logonly', 'fruid-logonly', 'full-logonly'." ;;
 esac
 
+# allow SERV to be case-insensitive
+case "$serv" in
+    [Cc]*) serv='CMM' ;;
+    [Ss]*) serv='SP' ;;
+esac
 
 ## main
 
@@ -139,12 +157,12 @@ for host in "$@"; do
                 die 1 "No download URL specified. Plase set one with the '--download-url' command-line option or the ILOM_DOWNLOAD_URL environment variable."
             fi
             echo "==== ${host} ===="
-            echo -e "set /SP/diag/snapshot dataset=${ILOM_SNAPSHOT_TYPE}\nset /SP/diag/snapshot dump_uri=${ILOM_DOWNLOAD_URL}\nexit" \
+            echo -e "set /${serv}/diag/snapshot dataset=${ILOM_SNAPSHOT_TYPE}\nset /${serv}/diag/snapshot dump_uri=${ILOM_DOWNLOAD_URL}\nexit" \
                 | ssh -T $(ilom-address "$host")
             ;;
         status)
             echo -n "${host}: "
-            echo -e "show /SP/diag/snapshot\nexit" \
+            echo -e "show /${serv}/diag/snapshot\nexit" \
                 | ssh -T $(ilom-address "$host") \
                 | grep -F -A1 'result' \
                 | sed -r -e 's/^\s*result =\s+//' \
