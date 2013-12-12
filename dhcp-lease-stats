@@ -1,0 +1,73 @@
+#! /usr/bin/env python
+#
+"""
+Print statistics about the DHCP leases.
+"""
+__docformat__ = 'reStructuredText'
+
+
+from collections import defaultdict
+from datetime import datetime
+
+
+## main: run tests
+
+# Example:
+#
+# lease 130.60.240.55 {
+#   starts 3 2010/04/14 14:54:38;
+#   ends 3 2010/04/14 17:54:38;
+#   tstp 3 2010/04/14 17:54:38;
+#   cltt 3 2010/04/14 14:54:38;
+#   binding state free;
+#   hardware ethernet 00:03:93:c1:8f:48;
+#   uid "\001\000\003\223\301\217H";
+# }
+#
+
+def parse_dhcpd_leases(path='/var/lib/dhcp/dhcpd.leases'):
+    leases = defaultdict(dict)
+    file = open(path, 'r')
+    for line in file:
+        line = line.strip()
+        if line.startswith('lease'):
+            _, addr, _ = line.split(None, 2)
+            a1, a2, a3, a4 = addr.split('.')
+            prefix = ("%s.%s.%s" % (a1, a2, a3))
+            addr = a4
+        elif line.startswith('starts'):
+            _, _, timestamp  = line.split(None, 2)
+            start = datetime.strptime(timestamp, '%Y/%m/%d %H:%M:%S;')
+        elif line.startswith('ends'):
+            _, _, timestamp  = line.split(None, 2)
+            end = datetime.strptime(timestamp, '%Y/%m/%d %H:%M:%S;')
+        elif line.startswith('binding state'):
+            _, _, state = line.split()
+            if state.startswith('free'):
+                state = 'free'
+            else:
+                state = 'used'
+        elif line.startswith('}'):
+            # commit values gathered so far
+            if start < datetime.now() < end:
+                leases[prefix][addr] = state
+    return leases
+
+
+def count(D):
+    counts = defaultdict(int)
+    for v in D.values():
+        counts[v] += 1
+
+
+def main():
+    leases = parse_dhcpd_leases()
+    for netprefix in leases.keys():
+        print ("%s:" % netprefix)
+        counts = count(leases[prefix])
+        for state, num in counts:
+            print ("  %s: %d" % (state, num))
+
+
+if "__main__" == __name__:
+    main()
