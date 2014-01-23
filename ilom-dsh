@@ -17,6 +17,7 @@ TARGET expression.  Output results in a format compatible with 'pdsh'.
 Options:
 
   --all, -a             Connect to all hosts known to 'pdsh'.
+  --multi, -m           Each argument is a separate command.
   --ssh-option, -o ARG  Pass ARG as an additional option to 'ssh'.
   --targets, -w TARGET  Connect to hosts specified in the TARGET expression.
   --timeout, -t NUM     Time out connections after NUM seconds.
@@ -63,8 +64,8 @@ is_absolute_path () {
 ## parse command-line
 
 
-short_opts='al:o:qt:vw:x'
-long_opts='all,debug,help,quiet,target:,ssh-option:,timeout:,user:,verbose'
+short_opts='al:mo:qt:vw:x'
+long_opts='all,debug,help,multi,many,quiet,target:,ssh-option:,timeout:,user:,verbose'
 
 if [ "x$(getopt -T)" != 'x--' ]; then
     # GNU getopt
@@ -86,6 +87,7 @@ fi
 while [ $# -gt 0 ]; do
     case "$1" in
         --all|-a)        target='-a' ;;
+        --multi|-m)      multi=yes ;;
         --debug|-x)      set -x ;;
         --help|-h)       usage; exit 0 ;;
         --ssh-option|-o) opt_o="$opt_o -o $2" ;;
@@ -113,13 +115,20 @@ fi
 # gather host names
 hosts=$(exec pdsh -R exec -N $target echo '%h')
 
+# single or multiple command-lines?
+if [ -n "$multi" ]; then
+    send_cmd () { for cmd in "$@"; do echo "$@"; done; }
+else
+    send_cmd () { echo "$@"; }
+fi
+
 # now run the actual command on ILOM SPs
 for host in $hosts; do
     sp=$(ilom-address "$host")
     if [ -n "$verbose" ]; then
         echo 1>&2 "Connecting to host '$sp' with 'ssh -T $opt_o $opt_l $opt_t $sp' ..."
     fi
-    (echo "$@"; echo "exit") \
+    (send_cmd "$@"; echo; echo "exit") \
         | ssh -T $opt_o $opt_l $opt_t $sp \
         | if [ -z "$quietly" ]; then \
             (while read line; do echo -n "${host}:"; echo "$line"; done); \
