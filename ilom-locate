@@ -104,6 +104,6 @@ fi
 ## main
 
 for host in "$@"; do
-    ilom-dsh -w "$(hostlist-to-pdsh "$@")" set /SYS/LOCATE "value=$state"  \
+    ilom-pdsh -w "$(hostlist-to-pdsh "$@")" set /SYS/LOCATE "value=$state"  \
         | eval cat $quietly
 done
