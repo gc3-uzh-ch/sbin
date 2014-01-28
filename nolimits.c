@@ -122,6 +122,11 @@ main(const int argc, char* const* argv)
             argv[0], NOLIMITS_CONF);
     exit(EXIT_FAILURE);
   };
+  if ('/' != *real_exec) {
+    fprintf(stderr, "Error in config file '%s': wrapped command '%s' is not an absolute path. Aborting for security reasons.\n",
+                NOLIMITS_CONF, real_exec);
+    exit(EXIT_FAILURE);
+  };
 
   /* remove cpu-time limits */
   unlimited.rlim_cur = RLIM_INFINITY;
