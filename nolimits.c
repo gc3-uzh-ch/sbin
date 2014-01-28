@@ -1,4 +1,4 @@
-#define NOLIMITS_CONF "nolimits.conf"
+#define NOLIMITS_CONF "/etc/security/nolimits.conf"
 
 #define _GNU_SOURCE
 #include <ctype.h>
@@ -12,29 +12,43 @@
 #include <unistd.h>
 
 
-/** Remove leading and trailing whitespace. */
-void strip(char* str)
+/** Remove leading whitespace. String @i str is modified in-place. */
+void lstrip(char* str)
 {
   /* remove initial whitespace */
-  char *s1 = str;
-  while(isspace(*s1))
-    s1++;
+  char *p = str;
+  while(isspace(*p))
+    p++;
 
   /* move string */
-  if (s1 > str) {
-    char *s2 = str;
-    while('\0' != *s1) {
-      *s2 = *s1;
-      s2++;
-      s1++;
+  if (p > str) {
+    char *q = str;
+    while('\0' != *p) {
+      *q = *p;
+      q++;
+      p++;
     };
-    *s2 = '\0';
+    *q = '\0';
   };
+}
 
+
+/** Remove trailing whitespace. String @i str is modified in-place. */
+void rstrip(char* str)
+{
   /* remove trailing whitespace */
-  s1 = str + strlen(str) - 1;
-  while(s1 > str && isspace(*s1)) s1--;
-  *(s1 + 1) = '\0';
+  char *p = str + strlen(str) - 1;
+  while(p > str && isspace(*p))
+    p--;
+  *(p + 1) = '\0';
+}
+
+
+/** Remove leading and trailing whitespace. String @i is modified in-place. */
+void strip(char* str)
+{
+  lstrip(str);
+  rstrip(str);
 }
 
 
@@ -44,51 +58,51 @@ void strip(char* str)
 char*
 real_exec_for(const char*path)
 {
-FILE* conf = fopen(NOLIMITS_CONF, "r");
-char* line = NULL;
-size_t len = 0;
-ssize_t read;
-int lineno = 1;
+    FILE* conf = fopen(NOLIMITS_CONF, "r");
+    char* line = NULL;
+    size_t len = 0;
+    ssize_t read;
+    int lineno = 1;
 
-if (NULL == conf)
-  return NULL;
+    if (NULL == conf)
+        return NULL;
 
- while(-1 != (read = getline(&line, &len, conf))) {
-   char *colon, *end;
+    while(-1 != (read = getline(&line, &len, conf))) {
+        char *colon, *end;
 
-   /* truncate at comment sign */
-   end = strchr(line, '#');
-   if (NULL != end)
-     *end = '\0';
+        /* truncate at comment sign */
+        end = strchr(line, '#');
+        if (NULL != end)
+            *end = '\0';
 
-   strip(line);
-   if (0 == strlen(line))
-     goto next;
+        lstrip(line);
+        if (0 == strlen(line))
+            goto next;
 
-   colon = strchr(line, ':');
-   if (NULL == colon) {
-     fprintf(stderr, "WARNING: malformed line %d '%s' in configuration file '%s'. Ignoring.\n",
-             lineno, line, NOLIMITS_CONF);
-     goto next;
-   };
+        colon = strchr(line, ':');
+        if (NULL == colon) {
+            fprintf(stderr, "WARNING: malformed line %d '%s' in configuration file '%s'. Ignoring.\n",
+                    lineno, line, NOLIMITS_CONF);
+            goto next;
+        };
 
-   *colon = '\0';
-   strip(line);
-   if (0 == strcmp(line, path)) {
-     char *result = ++colon;
-     strip(result);
-     fclose(conf);
-     return result;
-   };
+        *colon = '\0';
+        rstrip(line);
+        if (0 == strcmp(line, path)) {
+            char *result = ++colon;
+            strip(result);
+            fclose(conf);
+            return result;
+        };
 
- next:
-   free(line);
-   line = NULL;
-   lineno++;
- };
+      next:
+        free(line);
+        line = NULL;
+        lineno++;
+    }; /* while(read) */
 
- fclose(conf);
- return NULL;
+    fclose(conf);
+    return NULL;
 }
 
 
@@ -99,9 +113,10 @@ main(const int argc, char* const* argv)
   int rc;
   struct rlimit unlimited;
   char *real_exec;
+  char *argv0 = strdup(argv[0]); /* take a copy, as we'll modify it in-place */
 
   /* find out the path to the wrapped command */
-  real_exec = real_exec_for(argv[0]);
+  real_exec = real_exec_for(argv0);
   if (NULL == real_exec) {
     fprintf(stderr, "Wrapper command '%s' not found in configuration file '%s'. Aborting.\n",
             argv[0], NOLIMITS_CONF);
@@ -140,5 +155,6 @@ main(const int argc, char* const* argv)
   execv(real_exec, argv);
   const int err = errno;
   fprintf(stderr, "Could not execute wrapped program '%s': %s", real_exec, strerror(err));
+  free(argv0);
   return err;
 }
