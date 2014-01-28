@@ -1,10 +1,60 @@
+/**
+ * @file   nolimits.c
+ *
+ * Run a program without any CPU-time limits, regardless of any
+ * current @c ulimit or @c setrlimit() setting.
+ *
+ * In order to do so, @c nolimits must be installed set-UID to the
+ * super-user @c root; it will use this privilege to remove any
+ * currently-set CPU-time limit, then switch back to the caller user's
+ * UID and run the expected payload.
+ *
+ * A list of allowed programs must be prepared by the systems
+ * administrator in file @f /etc/security/nolimits.conf; each line
+ * list two paths, separated by a colon character @c :.  path on the
+ * right is what is actually executed when the path on the left (which
+ * must be a symlink to the @c nolimits wrapper) is invoked.
+ *
+ * Installation:
+ *
+ * 1. create configuration file @f /etc/security/nolimits.conf
+ * 2. compile sources:  @c cc -static -o nolimits nolimits.conf
+ * 3. deploy binary somewhere in $PATH, e.g., @f /usr/local/sbin/nolimits
+ * 4. for each command that you want to run w/out limits:
+ *    - rename it according to the right-hand part of the configuration file, e.g.: @c mv /usr/bin/scp /usr/bin/scp.real
+ *    - make the original name a symlink to the @c nolimits binary, e.g. @c ln -s /usr/local/sbin/nolimits /usr/bin/scp
+ *
+ * @author  riccardo.murri@gmail.com
+ * @version $Revision$
+ */
+/*
+ * Copyright (c) 2014 GC3, University of Zurich.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, see: http://www.gnu.org/licenses/gpl.html
+ *
+ */
+
+
+/** Location of the configuration file. */
 #define NOLIMITS_CONF "/etc/security/nolimits.conf"
 
+/* _GNU_SOURCE is required(?) for getline() */
 #define _GNU_SOURCE
 #include <ctype.h>
 #include <errno.h>
 #include <stdio.h>
-#include <stdlib.h> /* getline() */
+#include <stdlib.h>
 #include <string.h>
 #include <sys/resource.h>
 #include <sys/time.h>
