@@ -208,7 +208,7 @@ prepend-path    PATH              $PREFIX/bin
 prepend-path    MANPATH           $PREFIX/share/man
 prepend-path    LD_LIBRARY_PATH   $PREFIX/lib/R/lib
 
-system "${modulefiles_dir}/bin/log_module \$PPID"
+system "${software_dir}/Modules/bin/log_module \\\$PPID"
 EOF
 
 
