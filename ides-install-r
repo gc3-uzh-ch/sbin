@@ -1,0 +1,216 @@
+#! /bin/sh
+#
+me="$(basename $0)"
+
+## defaults
+
+VERSION=3.0.2
+KIND=patched
+
+software_dir='/panfs/panfs1.ften.es.hpcn.uzh.ch/software'
+modulefiles_dir='/panfs/panfs1.ften.es.hpcn.uzh.ch/etc/modulefiles'
+
+
+## usage help
+
+usage () {
+cat <<EOF
+Usage: $me [options] [KIND [VERSION]]
+
+Install R on the Schroedinger cluster. The installed code will be
+available via 'module load R/"version"-"date"'
+
+KIND is either one of 'base' (for the vanilla release version) or
+'patched' (for the daily-updated bugfix version).
+
+VERSION is only needed if you want to install a version different from
+the default one, which currently is ${VERSION}.
+
+Options:
+
+  --date, -d YYYY-MM-DD
+              Download the R-patched release from this date; if not
+              given, downloads today's release.  (A backlog of 7 days
+              is kept on the release server.)
+
+  --help, -h  Print this help text.
+
+EOF
+}
+
+
+## helper functions
+die () {
+  rc="$1"
+  shift
+  (echo -n "$me: ERROR: ";
+      if [ $# -gt 0 ]; then echo "$@"; else cat; fi) 1>&2
+  exit $rc
+}
+
+warn () {
+  (echo -n "$me: WARNING: ";
+      if [ $# -gt 0 ]; then echo "$@"; else cat; fi) 1>&2
+}
+
+have_command () {
+  type "$1" >/dev/null 2>/dev/null
+}
+
+require_command () {
+  if ! have_command "$1"; then
+    die 1 "Could not find required command '$1' in system PATH. Aborting."
+  fi
+}
+
+is_absolute_path () {
+    expr match "$1" '/' >/dev/null 2>/dev/null
+}
+
+
+## parse command-line
+
+short_opts='d:h'
+long_opts='date:,help'
+
+if [ "x$(getopt -T)" != 'x--' ]; then
+    # GNU getopt
+    args=$(getopt --name "$me" --shell sh -l "$long_opts" -o "$short_opts" -- "$@")
+    if [ $? -ne 0 ]; then
+        die 1 "Type '$me --help' to get usage information."
+    fi
+    # use 'eval' to remove getopt quoting
+    eval set -- $args
+else
+    # old-style getopt, use compatibility syntax
+    args=$(getopt "$short_opts" "$@")
+    if [ $? -ne 0 ]; then
+        die 1 "Type '$me --help' to get usage information."
+    fi
+    set -- $args
+fi
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --date|-d) date="$2"; shift ;;
+        --help|-h) usage; exit 0 ;;
+        --) shift; break ;;
+    esac
+    shift
+done
+
+
+## main
+
+kind=${1:-$KIND}
+version=${1:-VERSION}
+date=${date:-$(date -I)}
+
+require_command mktemp
+require_command module
+
+tmpdir=$(mktemp -t -d "${me}.tmp.XXXXXX") \
+    || die 2 "Cannot create temporary directory"
+cd "$tmpdir"
+
+# download sources
+case "$kind" in
+    base|R-base)
+        src_url=http://cran.r-project.org/src/base/R-3/R-3.0.2.tar.gz
+        tag=${version}-base
+        ;;
+    patched|R-patched)
+        src_url=ftp://ftp.stat.math.ethz.ch/Software/R/R-patched_${date}.tar.bz2
+        tag=${version}-${date}
+        ;;
+esac
+echo "== Will install R version '${tag}' from URL '$src_url'"
+
+set -ex
+env ftp_proxy=http://proxy.uzh.ch:3128/ \
+    wget -nv "${src_url}" -O sources.tar.gz
+tar -xaf sources.tar.gz
+cd R*
+set +ex
+
+# where will R be installed?
+PREFIX="${software_dir}/R/${version}-${date}"
+
+# install required compilation dependencies (DONE on all compute nodes, 2014-01-21 RM)
+#zypper --non-interactive install libreadline5 readline-devel tk tk-devel cairo cairo-devel libpng12-0 libpng-devel libjpeg libjpeg-devel libtiff3 libtiff-devel lzma lzma-devel libicu libicu-devel pth
+
+# use latest Java
+module load java/1.7.0
+if [ -z "$JAVA_HOME" ]; then
+    die 2 "Environment variable JAVA_HOME still unset after loading the Java module. Aborting."
+fi
+
+# correct instructions for compiling R w/ MKL are here:
+#   http://software.intel.com/en-us/articles/using-intel-mkl-with-r
+# the value for MKLROOT was extracted from `module load intel/comp/12.1`
+export MKLROOT=/panfs/panfs0.ften.es.hpcn.uzh.ch/share/software/Compilers/intel/Compiler/12.1.0/mkl
+export MKL_LIB_PATH=${MKLROOT}/lib/intel64
+MKL_LIBS=" \
+  -L${MKL_LIB_PATH}                         \
+  -Wl,--start-group                         \
+     ${MKL_LIB_PATH}/libmkl_gf_lp64.a       \
+     ${MKL_LIB_PATH}/libmkl_gnu_thread.a    \
+     ${MKL_LIB_PATH}/libmkl_core.a          \
+  -Wl,--end-group                           \
+  -lgomp -lpthread"
+
+echo "=== Building the R software ..."
+set -ex
+./configure --prefix="${PREFIX}" \
+            --with-blas="$MKL_LIBS" --with-lapack \
+            --with-readline \
+            --with-tcltk \
+            --with-cairo \
+            --with-libpng \
+            --with-jpeglib \
+            --with-libtiff \
+            --with-ICU \
+            CC=gcc-4.5 CFLAGS='-O3 -march=native' \
+            CXX=g++-4.5 CXXFLAGS='-O3 -march=native' \
+            FC=gfortran-4.5 FFLAGS='-O3 -march=native' \
+            F77=gfortran-4.5 F77FLAGS='-O3 -march=native' \
+            LIBnn=lib64 \
+            R_PRINTCMD=/bin/false \
+            JAVA_HOME=$JAVA_HOME \
+            ;
+make
+make check
+make install
+set +ex
+
+# make modulefile
+echo "=== Creating module file ..."
+mkdir -p "${modulefiles_dir}/R"
+cat > "${modulefiles_dir}/R/${tag}" <<EOF
+#%Module1.0
+##
+## For any issue with this modulefile, please
+## email: hpcnadmin@id.lists.uzh.ch
+##
+## Date: $(date -I)
+
+proc ModulesHelp { } {
+        global version
+
+        puts stderr "\tLoad the R language environment"
+        puts stderr "\tVersion ${tag}"
+}
+
+module-whatis   "loads the R environment"
+
+setenv          R_HOME            $PREFIX
+prepend-path    PATH              $PREFIX/bin
+prepend-path    MANPATH           $PREFIX/share/man
+prepend-path    LD_LIBRARY_PATH   $PREFIX/lib/R/lib
+
+system "${modulefiles_dir}/bin/log_module \$PPID"
+EOF
+
+
+echo "=== All done."
+exit 0
