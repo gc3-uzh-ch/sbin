@@ -103,7 +103,7 @@ done
 ## main
 
 kind=${1:-$KIND}
-version=${1:-VERSION}
+version=${1:-$VERSION}
 date=${date:-$(date -I)}
 
 require_command mktemp
