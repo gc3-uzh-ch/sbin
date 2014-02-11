@@ -1,0 +1,132 @@
+#! /bin/sh
+#
+me="$(basename $0)"
+
+usage () {
+cat <<EOF
+Usage: $me [options] HOSTNAME
+
+Generate a self-signed certificate for the given host.
+The HOSTNAME must be the fully-qualified DNS name.
+
+Options:
+
+  --help, -h  Print this help text.
+
+EOF
+}
+
+
+## helper functions
+die () {
+  rc="$1"
+  shift
+  (echo -n "$me: ERROR: ";
+     if [ $# -gt 0 ]; then echo "$@"; else cat; fi) 1>&2
+   exit $rc
+}
+
+have_command () {
+  type "$1" >/dev/null 2>/dev/null
+}
+
+require_command () {
+  if ! have_command "$1"; then
+        die 1 "Could not find required command '$1' in system PATH. Aborting."
+  fi
+}
+
+
+## parse command-line
+
+short_opts='h'
+long_opts='help'
+
+if [ "x$(getopt -T)" != 'x--' ]; then
+    # GNU getopt
+    args=$(getopt --name "$me" --shell sh -l "$long_opts" -o "$short_opts" -- "$@")
+    if [ $? -ne 0 ]; then
+        die 1 "Type '$me --help' to get usage information."
+    fi
+    # use 'eval' to remove getopt quoting
+    eval set -- $args
+else
+    # old-style getopt, use compatibility syntax
+    args=$(getopt "$short_opts" "$@")
+    if [ $? -ne 0 ]; then
+        die 1 "Type '$me --help' to get usage information."
+    fi
+    set -- $args
+fi
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --help|-h) usage; exit 0 ;;
+        --) shift; break ;;
+    esac
+    shift
+done
+
+
+## main
+
+fqdn="$1"
+if [ -z "$fqdn" ]; then
+  die 1 "No HOSTNAME given. Please type '$me --help' for usage help."
+fi
+
+
+require_command openssl
+
+
+set -ex
+
+# generate key (no passwd, no encryption)
+openssl genrsa -out "${fqdn}.key.pem" 4096
+
+# generate CSR
+tmp=$(mktemp "${me}.XXXXXX.cnf") \
+  || die 2 "Cannot create temporary file"
+sed -re "s/FQDN *=.*/FQDN = $fqdn/" > "$tmp" <<__EOF__
+# OpenSSL configuration file for creating a CSR for a server certificate
+# Adapt at least the FQDN and ORGNAME lines, and then run
+# openssl req -new -config myserver.cnf -keyout myserver.key -out myserver.csr
+# on the command line.
+
+# the fully qualified server (or service) name
+FQDN = example.uzh.ch
+
+# the name of your organization
+# (see also https://www.switch.ch/pki/participants.html)
+ORGNAME = Universitaet Zuerich
+
+# subjectAltName entries: to add DNS aliases to the CSR, delete
+# the '#' character in the ALTNAMES line, and change the subsequent
+# 'DNS:' entries accordingly. Please note: all DNS names must
+# resolve to the same IP address as the FQDN.
+ALTNAMES = DNS:\$FQDN   # , DNS:bar.example.org , DNS:www.foo.example.org
+
+# --- no modifications required below ---
+[ req ]
+default_bits = 2048
+prompt = no
+encrypt_key = no
+distinguished_name = dn
+req_extensions = req_ext
+
+[ dn ]
+C = CH
+ST = Zuerich
+L = Zuerich
+O = \$ORGNAME
+OU = S3IT
+CN = \$FQDN
+
+[ req_ext ]
+subjectAltName = \$ALTNAMES
+__EOF__
+openssl req -new -config "$tmp" -key "${fqdn}.key.pem" -out "${fqdn}.csr.pem"
+
+# sign it
+openssl x509 -req -days 365 -in "${fqdn}.csr.pem" -signkey "${fqdn}.key.pem" -out "${fqdn}.crt.pem"
+openssl x509 -subject -startdate -enddate -noout -in "${fqdn}.crt.pem"
