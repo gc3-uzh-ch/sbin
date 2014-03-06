@@ -4,7 +4,7 @@ me="$(basename $0)"
 
 ## defaults
 
-VERSION=3.0.2
+VERSION=3.0.3
 KIND=patched
 
 software_dir='/panfs/panfs1.ften.es.hpcn.uzh.ch/software'
@@ -116,7 +116,7 @@ cd "$tmpdir"
 # download sources
 case "$kind" in
     base|R-base)
-        src_url=http://cran.r-project.org/src/base/R-3/R-3.0.2.tar.gz
+        src_url=http://cran.r-project.org/src/base/R-3/R-${VERSION}.tar.gz
         tag=${version}-base
         ;;
     patched|R-patched)
