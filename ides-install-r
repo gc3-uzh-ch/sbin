@@ -120,7 +120,7 @@ case "$kind" in
         tag=${version}-base
         ;;
     patched|R-patched)
-        src_url=ftp://ftp.stat.math.ethz.ch/Software/R/R-patched_${date}.tar.bz2
+        src_url=ftp://ftp.stat.math.ethz.ch/Software/R/R-patched_${date}.tar.gz
         tag=${version}-${date}
         ;;
 esac
@@ -134,7 +134,7 @@ cd R*
 set +ex
 
 # where will R be installed?
-PREFIX="${software_dir}/R/${version}-${date}"
+PREFIX="${software_dir}/R/${tag}"
 
 # install required compilation dependencies (DONE on all compute nodes, 2014-01-21 RM)
 #zypper --non-interactive install libreadline5 readline-devel tk tk-devel cairo cairo-devel libpng12-0 libpng-devel libjpeg libjpeg-devel libtiff3 libtiff-devel lzma lzma-devel libicu libicu-devel pth
