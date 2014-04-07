@@ -4,9 +4,13 @@ me="$(basename $0)"
 
 ## defaults
 
+# version of R to install
 VERSION=3.0.3
+
+# whether to install the `-base` version or the `-patched` one
 KIND=patched
 
+# locations
 software_dir='/panfs/panfs1.ften.es.hpcn.uzh.ch/software'
 modulefiles_dir='/panfs/panfs1.ften.es.hpcn.uzh.ch/etc/modulefiles'
 
