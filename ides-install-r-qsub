@@ -1,0 +1,22 @@
+#! /bin/sh
+#
+# Install the latest "R-patched" code.
+#
+# R-patched does not have a tagged release; rather it provides
+# daily snapshots that include the latest bugfixes.  Each month,
+# we install the snapshot made on the first day of the month,
+# but wait until day 3 to allow time for the files to propagate
+# to the ETHZ mirror.
+#
+
+set -e
+
+# load SGE environment for 'qsub'
+. /etc/profile.d/sge.sh
+
+# move to directory where we want the output file(s)
+cd /panfs/panfs1.ften.es.hpcn.uzh.ch/root
+
+# submit the installation job, asking for the version of R that was
+# released on this months' 1st day
+exec qsub -cwd -l s_rt=0:25:00 -j y /root/sbin/ides-install-r --date $(date '+%Y-%m-01')
