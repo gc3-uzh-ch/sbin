@@ -55,30 +55,58 @@ def parse_qhost_output(text):
     """
     Parse output from `qhost -j` and return a dictionary mapping
     job IDs into the list of SGE queues where each job is running.
+
+    .. TO-DO:: rewrite this function to parse `qhost`'s XML output
     """
     jobs = defaultdict(list)
     # omit the header lines
     lines = text.split('\n')
     for line in lines:
-        # skip header lines and inactive/unknown hosts
-        if (line.endswith('-') or line == '' or line.startswith('HOSTNAME') or line.startswith('   job-ID')):
+        line = line.rstrip()
+        if (# skip header lines and inactive/unknown hosts
+                line == ''
+                # e.g.:
+                #     -------------------------------------------------------------------------------
+                #     global                  -               -     -       -       -       -       -
+                or line.endswith('-')
+                # e.g.:
+                #     HOSTNAME                ARCH         NCPU  LOAD  MEMTOT  MEMUSE  SWAPTO  SWAPUS
+                or line.startswith('HOSTNAME')
+                # e.g.:
+                #     job-ID  prior   name       user         state submit/start at     queue      master ja-task-ID
+                or line.endswith('ja-task-ID')):
             continue
-        elif line.startswith(' '):
+        elif line.startswith(' ') or line.startswith('\t'):
             # continuation line
-            line = line.strip()
+            line = line.lstrip()
             if line == '':
                 continue
-            if line[0].isdigit():
-                jobid, prior, name, user, state, day_started, time_started, queue, _ = line.split(None, 8)
-                assert '@' in queue
-                queuename, _ = queue.split('@', 1)
-                jobs[jobid].append((hostname, queuename))
-            else:
-                # continuation line
-                queuename, _ = line.strip().split('@', 1)
-                jobs[jobid].append((hostname, queuename))
+            try:
+                if line[0].isdigit():
+                    jobid, prior, name, user, state, day_started, time_started, queue, _ = line.split(None, 8)
+                    # queue instance name is truncated at 10 characters ...
+                    if '@' in queue:
+                        queuename, _ = queue.split('@', 1)
+                    else:
+                        queuename = queue
+                    jobs[jobid].append((hostname, queuename))
+                else:
+                    # continuation line
+                    queuename, _ = line.strip().split('@', 1)
+                    jobs[jobid].append((hostname, queuename))
+            except Exception:
+                logging.error("Cannot parse line '%s'" % line)
+                raise
         else:
-            hostname, arch, ncpu, load, memtot, memuse, swapto, swapus = line.strip().split()
+            # HOSTNAME                ARCH         NCPU  LOAD  MEMTOT  MEMUSE  SWAPTO  SWAPUS
+            # -------------------------------------------------------------------------------
+            # global                  -               -     -       -       -       -       -
+            # r01c01b01n01            lx24-amd64      8  1.37   23.6G    2.8G    4.0G     0.0
+            try:
+                hostname, arch, ncpu, load, memtot, memuse, swapto, swapus = line.strip().split()
+            except Exception:
+                logging.error("Cannot parse line '%s'" % line)
+                raise
     return jobs
 
 
