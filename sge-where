@@ -73,36 +73,13 @@ def parse_qhost_output(text):
                 assert '@' in queue
                 queuename, _ = queue.split('@', 1)
                 jobs[jobid].append((hostname, queuename))
-            else: 
+            else:
                 # continuation line
                 queuename, _ = line.strip().split('@', 1)
                 jobs[jobid].append((hostname, queuename))
         else:
             hostname, arch, ncpu, load, memtot, memuse, swapto, swapus = line.strip().split()
     return jobs
-
-
-def test_parse_qhost_output():
-    # extract from actual output on Schroedinger
-    jobs = parse_qhost_output("""
-HOSTNAME                ARCH         NCPU  LOAD  MEMTOT  MEMUSE  SWAPTO  SWAPUS
--------------------------------------------------------------------------------
-global                  -               -     -       -       -       -       -
-r01c01b01n01            lx24-amd64      8  8.00   23.6G    1.0G    4.0G   29.2M
-r01c02b01n02            lx24-amd64      8  8.00   23.6G    5.9G    4.0G   10.5M
-   job-ID  prior   name       user         state submit/start at     queue      master ja-task-ID 
-   ----------------------------------------------------------------------------------------------
-   2526245 0.52470 tf-024     aseitson     r     01/31/2013 10:35:49 short.q@r0 SLAVE         
-                                                                     short.q@r0 SLAVE         
-                                                                     short.q@r0 SLAVE         
-                                                                     short.q@r0 SLAVE         
-                                                                     short.q@r0 SLAVE         
-                                                                     short.q@r0 SLAVE         
-                                                                     short.q@r0 SLAVE         
-                                                                     short.q@r0 SLAVE         
-r01c02b02n01            lx24-amd64      8  8.31   23.6G    7.9G    4.0G   25.8M
-                              """)
-    assert (jobs['2526245'] == ([('r01c02b01n02', 'short.q')] * 8))
 
 
 def summarize(hqs):
@@ -150,12 +127,8 @@ def main():
     (options, args) = parser.parse_args()
 
     if options.selftest:
-        test_parse_qhost_output()
-
-        import doctest
-        doctest.testmod(name='sge_where',
-                        optionflags=doctest.NORMALIZE_WHITESPACE)
-        sys.exit(0)
+        rc = run_selftest()
+        sys.exit(rc)
 
     if len(args) != 1:
         logging.critical(
@@ -181,3 +154,37 @@ def main():
 
 if __name__ == '__main__':
     main()
+
+
+## test code
+
+def run_selftest():
+    test_parse_qhost_output()
+
+    import doctest
+    doctest.testmod(name='sge_where',
+                    optionflags=doctest.NORMALIZE_WHITESPACE)
+    return 0
+
+
+def test_parse_qhost_output():
+    # extract from actual output on Schroedinger
+    jobs = parse_qhost_output("""
+HOSTNAME                ARCH         NCPU  LOAD  MEMTOT  MEMUSE  SWAPTO  SWAPUS
+-------------------------------------------------------------------------------
+global                  -               -     -       -       -       -       -
+r01c01b01n01            lx24-amd64      8  8.00   23.6G    1.0G    4.0G   29.2M
+r01c02b01n02            lx24-amd64      8  8.00   23.6G    5.9G    4.0G   10.5M
+   job-ID  prior   name       user         state submit/start at     queue      master ja-task-ID
+   ----------------------------------------------------------------------------------------------
+   2526245 0.52470 tf-024     username     r     01/31/2013 10:35:49 short.q@r0 SLAVE
+                                                                     short.q@r0 SLAVE
+                                                                     short.q@r0 SLAVE
+                                                                     short.q@r0 SLAVE
+                                                                     short.q@r0 SLAVE
+                                                                     short.q@r0 SLAVE
+                                                                     short.q@r0 SLAVE
+                                                                     short.q@r0 SLAVE
+r01c02b02n01            lx24-amd64      8  8.31   23.6G    7.9G    4.0G   25.8M
+                              """)
+    assert (jobs['2526245'] == ([('r01c02b01n02', 'short.q')] * 8))
