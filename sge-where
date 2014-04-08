@@ -89,11 +89,10 @@ def parse_qhost_output(text):
                         queuename, _ = queue.split('@', 1)
                     else:
                         queuename = queue
-                    jobs[jobid].append((hostname, queuename))
                 else:
                     # continuation line
                     queuename, _ = line.strip().split('@', 1)
-                    jobs[jobid].append((hostname, queuename))
+                jobs[jobid].append( (hostname, queuename) )
             except Exception:
                 logging.error("Cannot parse line '%s'" % line)
                 raise
@@ -167,16 +166,18 @@ def main():
     # determine whether the argument is a JOBID or a USERNAME
     arg = args[0]
     if arg[0].isdigit():
-        # job id
+        # arg is job id
         qhost = capture('qhost -j')
         jobs = parse_qhost_output(qhost)
-        for jobid in jobs:
-            if jobid != arg:
-                continue
-            for hostname, queuename in jobs[jobid]:
-                print ("%-12s %s" % (jobid, hostname))
+        hqs = jobs[arg]
+        if options.summarize:
+            for (hostname, queuename), count in summarize(hqs).items():
+                print ("%-12s %-16s %-10s %s" % (arg, hostname, queuename, count))
+        else:
+            for (hostname, queuename)in hqs:
+                print ("%-12s %-16s %-10s" % (arg, hostname, queuename))
     else:
-        # username
+        # arg is username
         qhost = capture('qhost -u %s' % arg)
 
 
