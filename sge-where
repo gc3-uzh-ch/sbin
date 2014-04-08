@@ -129,6 +129,23 @@ def summarize(hqs):
     return count
 
 
+def print_job_location(jobid, hqs, brief):
+    """
+    Print job location information.
+
+    First argument is the job ID, second argument `hqs` is a list of
+    *(host name, queue name)* pairs; third argument `brief` is a
+    boolean, controlling whether identical output lines should be
+    collapsed together and a count be added at the end.
+    """
+    if brief:
+        for (hostname, queuename), count in summarize(hqs).items():
+            print ("%-12s %-16s %-10s %s" % (jobid, hostname, queuename, count))
+    else:
+        for (hostname, queuename)in hqs:
+            print ("%-12s %-16s %-10s" % (jobid, hostname, queuename))
+
+
 ## main
 
 from optparse import OptionParser
@@ -170,16 +187,13 @@ def main():
         qhost = capture('qhost -j')
         jobs = parse_qhost_output(qhost)
         hqs = jobs[arg]
-        if options.summarize:
-            for (hostname, queuename), count in summarize(hqs).items():
-                print ("%-12s %-16s %-10s %s" % (arg, hostname, queuename, count))
-        else:
-            for (hostname, queuename)in hqs:
-                print ("%-12s %-16s %-10s" % (arg, hostname, queuename))
+        print_job_location(arg, hqs, options.summarize)
     else:
         # arg is username
         qhost = capture('qhost -u %s' % arg)
-
+        jobs = parse_qhost_output(qhost)
+        for jobid, hqs in jobs.items():
+            print_job_location(jobid, hqs, options.summarize)
 
 if __name__ == '__main__':
     main()
