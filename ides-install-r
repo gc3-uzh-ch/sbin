@@ -35,7 +35,8 @@ Options:
   --date, -d YYYY-MM-DD
               Download the R-patched release from this date; if not
               given, downloads today's release.  (A backlog of 7 days
-              is kept on the release server.)
+              is kept on the release server.)  If installing "R-base",
+              this option is silently ignored.
 
   --help, -h  Print this help text.
 
