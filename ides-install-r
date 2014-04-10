@@ -5,7 +5,7 @@ me="$(basename $0)"
 ## defaults
 
 # version of R to install
-VERSION=3.0.3
+VERSION=3.1.0
 
 # whether to install the `-base` version or the `-patched` one
 KIND=patched
