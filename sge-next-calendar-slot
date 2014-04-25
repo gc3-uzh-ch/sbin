@@ -1,0 +1,281 @@
+#! /usr/bin/env python
+"""
+Parse a Grid Engine calendar definition file (as printed, e.g., by
+`qconf -scal`) and print the next occurrence of a specified state.
+
+Options are provided to specify the state to look for, whether the
+starting or ending time should be printed, and to change the output
+format of the dates.
+
+By default, output the UNIX epoch corresponding to the start of the
+next "off" time according to a GridEngine calendar.
+
+**Note:** The parsing of the Grid Engine calendar file is incomplete:
+simple cases should work, but e.g. overlapping time lapses are not yet
+supported.
+"""
+
+from datetime import datetime
+import logging
+import os
+import sys
+
+## auxiliary functions
+
+STATES = ['on', 'off', 'suspended']
+
+def parse_sge_calendar(text):
+    """
+    Parse output text from `qconf -scal` and return a list of triples
+    *(start, end, state)*.
+
+    In each returned triple, *start* and *end* are Python `datetime`
+    objects, and *state* is one of the string constants ``"on"``,
+    ``"off"``, or ``"suspended"``.
+    """
+    result = []
+    for line in text.split('\n'):
+        line = line.strip().lower()
+        if line == '' or line.startswith('#') or line.startswith('calendar_name'):
+            continue
+        elif line.startswith('week'):
+            _, calspec = line.split()
+            if calspec == 'none':
+                continue
+            raise NotImplementedError("Week calendars not supported!")
+        elif line.startswith('year'):
+            _, calspec = line.split()
+            if calspec == 'none':
+                continue
+            parts = calspec.split('=')
+            if len(parts) == 1:
+                if parts[0] in STATES:
+                    raise NotImplementedError("Overriding state is not supported, hence no 'year <STATE>' specification!")
+                else:
+                    year_day_range_list = parts[0]
+                    daytime_range_list = ['0:00:00-23:59:59']
+                    state = 'off'
+            else:
+                year_day_range_list = parts[0]
+                if parts[1] in STATES:
+                    # daytime_range_list omitted, defaults to whole day
+                    daytime_range_list = ['0:00:00-23:59:59']
+                    state = parts[1]
+                else:
+                    daytime_range_list = parts[1].split(',')
+                    if len(parts) > 2:
+                        state = parts[2]
+                    else:
+                        # state omitted, defaults to off
+                        state = 'off'
+            periods = year_day_range_list.split(',')
+            result += [ _parse_period(period, lapse, state)
+                        for lapse in daytime_range_list
+                        for period in periods ]
+        else:
+            logging.warning("Ignoring unexpected calendar line: '%s'", line)
+            continue
+    return result
+
+def _parse_period(period, lapse, state):
+    # parse date range specification
+    if '-' in period:
+        period_begin, period_end = period.split('-')
+    else:
+        period_begin = period
+        period_end = period
+    day_of_the_month1, month1, year1 = _parse_date(period_begin)
+    day_of_the_month2, month2, year2 = _parse_date(period_end)
+    # parse time range specification
+    assert '-' in lapse
+    lapse_begin, lapse_end = lapse.split('-')
+    hour1, minute1, second1 = _parse_time_start(lapse_begin)
+    hour2, minute2, second2 = _parse_time_end(lapse_end)
+    return (
+        datetime(year1, month1, day_of_the_month1, hour1, minute1, second1),
+        datetime(year2, month2, day_of_the_month2, hour2, minute2, second2),
+        state
+        )
+
+def _parse_date(dt):
+    assert dt.count('.') == 2
+    day, month, year = dt.split('.')
+    return int(day), int(month), int(year)
+
+def _parse_time(tm, default_min, default_sec):
+    colons = tm.count(':')
+    if colons == 2:
+        hr, min, sec = tm.split(':')
+        return int(hr), int(min), int(sec)
+    elif colons == 1:
+        hr, min = tm.split(':')
+        return int(hr), int(min), default_sec
+    else:
+        return int(tm), default_min, default_sec
+
+def _parse_time_start(tm):
+    return _parse_time(tm, 0, 0)
+
+def _parse_time_end(tm):
+    return _parse_time(tm, 59, 59)
+
+
+## main
+
+from optparse import OptionParser
+
+def main():
+    parser = OptionParser(usage="Usage: %prog [options] [FILE]",
+                          version="%prog 1.0")
+    parser.add_option("-b", "--start",
+                      action="store_true",
+                      dest="start",
+                      default=False,
+                      help="Print the start time (default).")
+    parser.add_option("-e", "--end",
+                      action="store_true",
+                      dest="end",
+                      default=False,
+                      help="Print the end time.")
+    parser.add_option("-f", "--format",
+                      action="store",
+                      dest="format",
+                      default='%s',
+                      help="Use this strftime() format for printing out dates.")
+    parser.add_option("-s", "--state",
+                      action="store",
+                      dest="state",
+                      default='off',
+                      help="Search for occurrences of this state. (Default: 'off')")
+    parser.add_option("-v", "--verbose",
+                      action="count",
+                      dest="verbose",
+                      default=0,
+                      help="Increase verbosity.")
+    parser.add_option("--selftest",
+                      action="store_true",
+                      dest="selftest",
+                      default=False,
+                      help="Run internal code tests and no other action.",)
+    (options, args) = parser.parse_args()
+
+    logging.basicConfig(
+        name=os.path.basename(sys.argv[0]),
+        level=logging.WARNING-10*options.verbose)
+
+    if options.selftest:
+        rc = run_selftest()
+        sys.exit(rc)
+
+    # sanity check
+    if options.state not in STATES:
+        logging.critical(
+            "State must be one of %s; got '%s' instead",
+            str.join(', ', STATES), options.state)
+        sys.exit(1)
+    if len(args) > 1:
+        logging.critical(
+            "Can only provide 1 file to read on the command-line."
+            " Type '%s --help' to get usage help.",
+            os.path.basename(sys.argv[0]))
+
+    if options.start is False and options.end is False:
+        options.start = True
+
+    if args:
+        inputfile = open(args[0], 'r')
+    else:
+        # default to STDIN
+        inputfile = sys.stdin
+    calendar = inputfile.read()
+    phases = [ phase for phase in parse_sge_calendar(calendar)
+               if phase[2]==options.state ]
+    first_phase = min(phases)
+    if phases:
+        if options.start:
+            print(first_phase[0].strftime(options.format))
+        if options.end:
+            print(first_phase[1].strftime(options.format))
+    else:
+        logging.info("Empty calendar.")
+
+
+## test code
+
+import unittest
+class TestParseGECalendar(unittest.TestCase):
+    """
+    Test the `parse_sge_calendar` function.
+    """
+
+    def test_example1(self):
+        valid = parse_sge_calendar("year  12.03.2004=12-23=off")
+        self.assertEqual(len(valid), 1)
+        self.assertEqual(len(valid[0]), 3)
+        start, end, state = valid[0]
+        self.assertEqual(start.year, 2004)
+        self.assertEqual(start.month, 3)
+        self.assertEqual(start.day, 12)
+        self.assertEqual(start.hour, 12)
+        self.assertEqual(end.year,  start.year)
+        self.assertEqual(end.month, start.month)
+        self.assertEqual(end.day,   start.day)
+        self.assertEqual(end.hour, 23)
+        self.assertEqual(state, "off")
+
+    def test_day_range(self):
+        valid = parse_sge_calendar("year  30.3.1999-31.3.1999=on")
+        self.assertEqual(len(valid), 1)
+        self.assertEqual(len(valid[0]), 3)
+        start, end, state = valid[0]
+        self.assertEqual(start.year,  1999)
+        self.assertEqual(start.month, 3)
+        self.assertEqual(start.day,   30)
+        self.assertEqual(start.hour,  0)
+        self.assertEqual(start.minute, 0)
+        self.assertEqual(start.second, 0)
+        self.assertEqual(end.year,    1999)
+        self.assertEqual(end.month,   3)
+        self.assertEqual(end.day,     31)
+        self.assertEqual(end.hour,    23)
+        self.assertEqual(end.minute,  59)
+        self.assertEqual(end.second,  59)
+        self.assertEqual(state,       "on")
+
+
+    def test_many_triples(self):
+        valid = parse_sge_calendar("year  1.1.1999,6.1.1999,28.3.1999,30.3.1999-31.3.1999,18.5.1999-19.5.1999,3.10.1999,25.12.1999,26.12.1999=on")
+        self.assertEqual(len(valid), 8)
+
+    def test_all_triples_same_state(self):
+        valid = parse_sge_calendar("year  1.1.1999,6.1.1999,28.3.1999,30.3.1999-31.3.1999,18.5.1999-19.5.1999,3.10.1999,25.12.1999,26.12.1999=on")
+        for triple in valid:
+            self.assertEqual(triple[2], "on")
+
+    def test_default_state_is_off(self):
+        valid = parse_sge_calendar("year  1.1.1999,6.1.1999,28.3.1999,30.3.1999-31.3.1999,18.5.1999-19.5.1999,3.10.1999,25.12.1999,26.12.1999")
+        for triple in valid:
+            self.assertEqual(triple[2], "off")
+
+    def test_year_none(self):
+        valid = parse_sge_calendar("year  NONE")
+        self.assertEqual(len(valid), 0)
+
+    def test_week_none(self):
+        valid = parse_sge_calendar("week  NONE")
+        self.assertEqual(len(valid), 0)
+
+def run_selftest():
+    import doctest
+    doctest.testmod(name='sge_next_maintenance',
+                    optionflags=doctest.NORMALIZE_WHITESPACE)
+
+    unittest.main(argv=[ sys.argv[0] ])
+
+    return 0
+
+
+## actual invocation of the main function
+
+if __name__ == '__main__':
+    main()
