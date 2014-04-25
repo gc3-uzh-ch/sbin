@@ -131,12 +131,12 @@ def main():
                       action="store_true",
                       dest="start",
                       default=False,
-                      help="Print the start time (default).")
+                      help="Print the start time (default). This is mutually exclusive with -e/--end.")
     parser.add_option("-e", "--end",
                       action="store_true",
                       dest="end",
                       default=False,
-                      help="Print the end time.")
+                      help="Print the end time. This is mutually exclusive with -b/--start.")
     parser.add_option("-f", "--format",
                       action="store",
                       dest="format",
@@ -160,7 +160,6 @@ def main():
     (options, args) = parser.parse_args()
 
     logging.basicConfig(
-        name=os.path.basename(sys.argv[0]),
         level=logging.WARNING-10*options.verbose)
 
     if options.selftest:
@@ -170,12 +169,17 @@ def main():
     # sanity check
     if options.state not in STATES:
         logging.critical(
-            "State must be one of %s; got '%s' instead",
+            "State must be one of %s; got '%s' instead.",
             str.join(', ', STATES), options.state)
         sys.exit(1)
     if len(args) > 1:
         logging.critical(
             "Can only provide 1 file to read on the command-line."
+            " Type '%s --help' to get usage help.",
+            os.path.basename(sys.argv[0]))
+    if options.start and options.end:
+        logging.critical(
+            "Options -b/--start and -e/--end are mutually exclusive."
             " Type '%s --help' to get usage help.",
             os.path.basename(sys.argv[0]))
 
@@ -188,16 +192,18 @@ def main():
         # default to STDIN
         inputfile = sys.stdin
     calendar = inputfile.read()
-    phases = [ phase for phase in parse_sge_calendar(calendar)
-               if phase[2]==options.state ]
-    first_phase = min(phases)
-    if phases:
-        if options.start:
-            print(first_phase[0].strftime(options.format))
-        if options.end:
-            print(first_phase[1].strftime(options.format))
+    if options.start:
+        target = 0
     else:
-        logging.info("Empty calendar.")
+        target = 1
+    now = datetime.now()
+    phases = [ phase for phase in parse_sge_calendar(calendar)
+               if (phase[2]==options.state and phase[target] > now) ]
+    if phases:
+        first_phase = min(phases)
+        print(first_phase[target].strftime(options.format))
+    else:
+        logging.info("Empty calendar, or period already in the past.")
 
 
 ## test code
