@@ -90,8 +90,12 @@ def parse_qhost_output(text):
                     else:
                         queuename = queue
                 else:
-                    # continuation line
-                    queuename, _ = line.strip().split('@', 1)
+                    # continuation line; still,
+                    # queue instance name is truncated at 10 characters ...
+                    if '@' in queue:
+                        queuename, _ = queue.split('@', 1)
+                    else:
+                        queuename = queue
                 jobs[jobid].append( (hostname, queuename) )
             except Exception:
                 logging.error("Cannot parse line '%s'" % line)
