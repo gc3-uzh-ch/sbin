@@ -1,0 +1,53 @@
+#!/bin/bash
+
+# http://epico.escience-lab.org
+# mailto:baro@democritos.it
+
+#exec telspect -H sp-storage1-2 -U manage -P '!manage' "$@"
+# connstorage connects to a dothill/HP-P2000 controller 
+
+function Usage() {
+	echo -e "\n  connstorage lets you connect to a Dothill/HP-P2000 storage controller"
+	echo -e "\nUsage: connstorage [controller-name]"
+	echo -e "\nWhere controller-name is a DotHill controller as in the DNS"
+
+	echo -e "\nController names and aliases"
+	echo -e "\n 1a == ctrl-oss1-oss2-a == sclustre-ctrl-oss1-oss2-a"	
+	echo -e " 3a == ctrl-oss3-oss4-a == sclustre-ctrl-oss3-oss4-a"	
+	echo -e " 5a == ctrl-oss5-oss6-a == sclustre-ctrl-oss5-oss6-a"	
+	echo -e " 7a == ctrl-oss7-oss8-a == sclustre-ctrl-oss7-oss8-a"	
+	echo -e " mdsa == ctrl-mds1-mds2-a == sclustre-ctrl-mds1-mds2-a"	
+	echo -e "\n ...the same is for controller b."		
+		
+	echo -e "\nExamples"
+	echo -e "\n To run the 'show system' command on sclustre-ctrl-oss1-oss2-a'"	
+	echo -e " # connstorage -c sclustre-ctrl-oss1-oss2-a 'show system'"
+	echo -e "\n To enter an interactive session on sclustre-ctrl-oss3-oss4-b'"	
+	echo -e " # connstorage -c sclustre-ctrl-oss3-oss4-b -i"
+	exit 1
+}
+
+if [ "x$1" = "x" ]
+then
+	Usage
+   exit 1
+fi
+
+
+case $1 in
+	1[aA] | ctrl-oss1-oss2-a | sclustre-ctrl-oss1-oss2-a )	IP=16 ; U=manage; P='!manage' ;;
+	1[bB] | ctrl-oss1-oss2-b | sclustre-ctrl-oss1-oss2-b )	IP=17 ; U=manage; P='!manage' ;;
+	3[aA] | ctrl-oss3-oss4-a | sclustre-ctrl-oss3-oss4-a )	IP=20 ; U=manage; P='!manage' ;;
+	3[bB] | ctrl-oss3-oss4-b | sclustre-ctrl-oss3-oss4-b )	IP=21 ; U=manage; P='!manage' ;;
+	5[aA] | ctrl-oss5-oss6-a | sclustre-ctrl-oss5-oss6-a )	IP=24 ; U=manage; P='!manage' ;;
+	5[bB] | ctrl-oss5-oss6-b | sclustre-ctrl-oss5-oss6-b )	IP=25 ; U=manage; P='!manage' ;;
+	7[aA] | ctrl-oss7-oss8-a | sclustre-ctrl-oss7-oss8-a )	IP=28 ; U=manage; P='!manage' ;;
+	7[bB] | ctrl-oss7-oss8-b | sclustre-ctrl-oss7-oss8-b )	IP=29 ; U=manage; P='!manage' ;;
+   MDS[aA] | ctrl-mds1-mds2-a | sclustre-ctrl-mds1-mds2-a ) IP=12 ; U=manage; P='!manage' ;;
+   MDS[bB] | ctrl-mds1-mds2-b | sclustre-ctrl-mds1-mds2-b ) IP=13 ; U=manage; P='!manage' ;;
+	*) Usage ; exit 1 ;;
+esac
+shift
+
+exec sshspect --log_user -H 10.128.93.$IP -U "$U" -P "$P" "$@"
+#EOF

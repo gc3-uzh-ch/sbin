@@ -1,0 +1,102 @@
+#!/usr/bin/awk -f
+#
+
+# this script simply takes a line of "show volumes" command
+# on a P2000 or DotHill controller and returns configurations for
+# multipath.conf to use on hosts in /etc/multipath.conf
+
+# when used with connstorage, take only lines with Health=OK flag (no headers or other lines)
+# connstorage $i --log_user -c 'show volumes' | awk '$12 == "OK" {print $2,$11}
+
+# e.g.
+
+#		root@gw2:~/eXact/sbin-repo# echo "vd04  ost04  7993.5GB 00c0ff157c6e0000887f195301000000  write-back    standard         Adaptive         standard     standard N/A                                               600C0FF000157C6E887F195301000000  OK" | parse_volumes
+#		# multipath.conf auto generated
+#		blacklist {
+#		   devnode "^sda[1-9]"
+#		   devnode "^(ram|raw|loop|fd|md|dm-|sr|scd|st)[0-9]*"
+#		   devnode "^hd[a-z]"
+#		}
+#		defaults {
+#		   user_friendly_names    yes
+#		}
+#		devices {
+#		   device {
+#		   no_path_retry           2
+#		   failback                8
+#		   features                "1 queue_if_no_path"
+#		   vendor                  "DotHill"
+#		   product                 "DH4730"
+#		   path_checker            tur
+#		   prio                    alua
+#		   path_grouping_policy    group_by_prio
+#		   getuid_callout          "/lib/udev/scsi_id --whitelisted --device=/dev/%n"
+#		   rr_weight               priorities
+#		   }
+#		}
+#		multipaths {
+#		   #configuration for volume vd04
+#		   multipath {
+#			  wwid                    3ost04
+#			  alias                   vd04
+#		   }
+#		}
+
+
+BEGIN  {
+	count=0;
+}
+
+{
+	volumeName[count] = $1;
+	wwn[count] = $2;
+	count++;
+}
+
+END  {
+
+	print "# multipath.conf auto generated" 
+	print "blacklist {"
+	print "\tdevnode \"^sda[1-9]\""
+	print "\tdevnode \"^(ram|raw|loop|fd|md|dm-|sr|scd|st)[0-9]*\""
+	print "\tdevnode \"^hd[a-z]\""
+	print "}"
+
+   print "defaults {"
+        print "\tuser_friendly_names	  yes"
+   print "}"
+
+
+	print "devices {"
+		print "\tdevice {"
+			print "\tno_path_retry           2"
+			print "\tfailback                8"
+			print "\tfeatures                \"1 queue_if_no_path\""
+			print "\tvendor                  \"DotHill\""
+			print "\tproduct                 \"DH4730\""
+	      print "\tpath_checker            tur"
+			print "\tprio                    alua"
+			print "\tpath_grouping_policy    group_by_prio"
+         print "\tgetuid_callout          \"/lib/udev/scsi_id --whitelisted --device=/dev/%n\""
+			print "\trr_weight               priorities"
+		print "\t}"
+	print "}"
+	print "multipaths {"
+
+	for (i=0;i<count;i++) {
+		split(volumeName[i],alias,"_")
+		print "\t#configuration for volume " volumeName[i]
+		print "\tmultipath {"
+		print "\t\twwid                    "3""tolower(wwn[i])
+		print "\t\talias                   "volumeName[i]
+#                print "\t\tpath_grouping_policy    multibus"
+#                print "\t\tpath_selector           \"round-robin 0\""
+#                print "\t\tfailback                manual"
+#                print "\t\trr_weight               priorities"
+#                print "\t\tno_path_retry           5"
+#                print "\t\trr_min_io               10"
+		print "\t}"
+	}
+
+	print "}"
+}

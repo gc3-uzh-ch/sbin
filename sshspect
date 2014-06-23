@@ -1,0 +1,224 @@
+#!/usr/bin/env expect
+
+#=====================================#
+# Author: Moreno 'baro' Baricevic     #
+# Path: /root/baro/bin/               #
+# File: sshspect.tcl                  #
+# Date: 10 Jul 2009                   #
+#-------------------------------------#
+# Prev Modified: 10 Jul 2009          #
+# Prev Modified: 13 Jul 2009          #
+# Prev Modified: 15 Jul 2009          #
+# Prev Modified: 20 Jul 2009          #
+# Prev Modified: 28 Jul 2009          #
+# Prev Modified: 05 Aug 2009          #
+# Last Modified: 04 Oct 2010 - addis  #
+#=====================================#
+#
+# ./telspect -H 10.1.255.2 -U manage -P '!manage' -c 'show versions'
+
+# Avoid "Press any key to continue (Q to quit)":
+#set rows [stty rows]
+#set cols [stty columns]
+#stty rows $rows columns $cols < $spawn_out(slave,name)
+
+set timeout 10
+
+log_user 0	;# 0-quiet, 1=verbose ('-l' cmdline option)
+
+#====================================================================#
+
+proc base { m } {
+	set l [string last "/" $m]
+	incr l
+	if {$l != [string length $m]} {
+		return [string range $m $l end]
+	}
+	return $m
+}
+
+set myself [base $argv0]
+
+proc Usage { errmsg } {
+	global myself
+	global timeout
+	if {[string length $errmsg] > 1} {
+		puts stderr "*** $myself: $errmsg"
+	}
+	puts stderr "
+$myself -H HOST -U USER -P PASSWD { -c COMMAND } \[ -i ]
+
+	-H|--host HOST		management module (IP|HOSTNAME)
+	-U|--user USER		username on mm
+	-P|--password PASSWORD	password on mm
+
+	-c|--command COMMAND	e.g. 'show versions'
+
+	-I|--stdin|-		read commands from stdin
+	-i|--interactive	drop a telnet interactive session
+
+	--log_user		enable full 'expect' output
+	--timeout TMO		set 'expect' timeout (default ${timeout}s)
+"
+	exit
+}
+
+proc cleancmd { cmd } {
+	set clean $cmd;
+	if {[string match *\{* $cmd]} {
+		set cl [string length $cmd]
+		incr cl -2
+		set clean [string range $cmd 1 $cl]
+	}
+	return $clean
+}
+
+#====================================================================#
+
+if {[llength $argv] < 1} {
+	Usage ""
+}
+
+set interactive 0
+set cmd_from_stdin 0
+
+proc shiftopt {} {
+	global argv
+	set argv [lrange $argv 1 end]
+}
+proc getopt {} {
+	global argv
+	set v [lindex $argv 1]
+	if { [string length $v] } {
+		set argv [lrange $argv 2 end]
+		return $v
+	}
+	Usage "[lindex $argv 0] requires an argument"
+}
+while {[string match -* [lindex $argv 0]]} {
+	switch -exact -- [lindex $argv 0] {
+		--timeout - --tmout - -t	{ set timeout [getopt]	}
+		--host - --mm - --sp - -H	{ set host [getopt]	}
+		--user - -U			{ set user [getopt]	}
+		--password - --passwd - -P	{ set password [getopt]	}
+		--command - --cmd - -c		{ set command [getopt]	}	;# { set command [lrange $argv 1 end] ; set argv "" ; }
+		--stdin - -I - -		{ set cmd_from_stdin 1 ; shiftopt ; }
+		--interactive - --int - -i	{ set interactive 1 ; log_user 1 ; shiftopt }
+		--log_user - --log - -l		{                     log_user 1 ; shiftopt }
+		--help - -h - --usage - -u	{ Usage "" }
+		default				{ Usage "invalid option '[lindex $argv 0]'" }
+	}
+}
+
+# cmdline sanity checks
+
+if { ![info exists host] || ![info exists user] || ![info exists password] } {
+	Usage "host, user and password must be defined"
+}
+
+if { !$cmd_from_stdin && !$interactive && ![info exists command] } {
+	Usage "either -c or -i must be defined"
+}
+
+if { $cmd_from_stdin } {
+	if { $interactive || [info exists command] } {
+		Usage "--stdin/-I/- must be invoked without interactive/command option(s)"
+	}
+} else {
+	if { [info exists command] } {
+		set COMMAND [cleancmd $command]
+	} else {
+		if { !$interactive } {
+			Usage "-c or -i must be given"
+		}
+	}
+}
+
+#====================================================================#
+
+set prompt "# "
+
+if { [catch { set tpid [spawn -noecho ssh -l $user $host] } excuse] } {
+	puts stderr "*** $myself: $excuse"
+	exit
+}
+if { $tpid == 0 } {
+	puts stderr "*** $myself: spawn() failed $tpid"
+}
+set telnet $spawn_id
+stty rows 10000 columns 250 < $spawn_out(slave,name)
+
+expect {
+	eof {
+		puts stderr "*** $myself: $host looks unreachable..."
+		exit
+	}
+	-nocase "login:" {
+		send -- "$user\r\n"
+		exp_continue
+	}
+	-nocase "$user@$host's password:" {
+		send -- "$password\r\n"
+		exp_continue
+	}
+	-nocase "Password:" {
+		send -- "$password\r\n"
+		exp_continue
+	}
+	$prompt
+}
+
+while {1} {
+	if {$cmd_from_stdin} {
+		set in [gets stdin]	;# non expect_user perche' se becca eof chiude anche stdout!!!!!!! (e in piu' casini con buffer di expect...)
+		if {[eof stdin]} break;
+		set COMMAND [cleancmd $in]
+		if {![string length $COMMAND]} continue;
+		if {[regexp "^(exit|quit)" $COMMAND]} break;
+	}
+
+	if { [info exists COMMAND] } {
+		puts stderr "# executing command \[$COMMAND]"
+#		send -- "\r\n" ;			expect $prompt
+#		send -- "stty columns 250\r\n" ;	expect $prompt
+#		send -- "\r\n" ;			expect $prompt
+#		send -- "stty rows 10000\r\n" ;		expect $prompt
+#		send -- "\r\n" ;			expect $prompt
+		send -- "$COMMAND\r\n"
+
+		if { [log_user] } {
+			expect $prompt
+		} else {
+			expect {
+				eof {
+					puts stderr "*** $myself: mmh, got EOF..."
+					if {$cmd_from_stdin} { break; }
+				}
+				-re "\n(.*)\n$prompt" {
+					puts "$expect_out(1,string)"
+				}
+				$prompt
+			}
+		}
+	}
+
+	if {!$cmd_from_stdin} break;	# "do { ... } while {$cmd_from_stdin};" non existe...
+}
+
+if { $interactive } {
+
+	interact
+
+} else {
+
+	send -- "exit\r\n"
+	if { [log_user] } {
+		puts ""
+	}
+#	expect -re {\$}
+
+}
+
+#====================================================================#
+
+#EOF
