@@ -38,6 +38,8 @@ def parse_dhcpd_leases(path='/var/lib/dhcp/dhcpd.leases'):
         elif line.startswith('starts'):
             _, _, timestamp  = line.split(None, 2)
             start = datetime.strptime(timestamp, '%Y/%m/%d %H:%M:%S;')
+        elif line.startswith('ends never'):
+            end = datetime(9999, 12, 31, 23, 59, 00)
         elif line.startswith('ends'):
             _, _, timestamp  = line.split(None, 2)
             end = datetime.strptime(timestamp, '%Y/%m/%d %H:%M:%S;')
@@ -58,14 +60,15 @@ def count(D):
     counts = defaultdict(int)
     for v in D.values():
         counts[v] += 1
+    return counts
 
 
 def main():
     leases = parse_dhcpd_leases()
     for netprefix in leases.keys():
         print ("%s:" % netprefix)
-        counts = count(leases[prefix])
-        for state, num in counts:
+        counts = count(leases[netprefix])
+        for state, num in counts.items():
             print ("  %s: %d" % (state, num))
 
 
