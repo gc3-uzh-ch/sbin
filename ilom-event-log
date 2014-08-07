@@ -1,0 +1,147 @@
+#!/usr/bin/perl
+#
+# WARNING: This utility depends on the `ilom-address` script, which
+# you MUST customize to your cluster environment.
+#
+our $rcsid='$Id$';
+our $VERSION='1.0';
+
+=pod
+
+=head1 NAME
+
+ilom-event-log - Dump ILOM event log
+
+=head1 SYNOPSIS
+
+ilom-event-log [OPTIONS] HOST [HOST ...]
+
+Dump the ILOM event log for the given HOSTs.
+
+Note that the full event log can be several screenfuls long.
+
+Options:
+
+=over 4
+
+=item --lines, -n I<NUM>
+
+Limit output to I<NUM> lines.
+
+=item --help
+
+Print help text and exit.
+
+=item -V, --version
+
+Print version number and exit.
+
+=back
+
+=head1 DESCRIPTION
+
+Dump the ILOM event log for the given HOSTs.
+
+Note that the full event log can be several screenfuls long.
+Does something to the system.
+
+=head1 COPYRIGHT AND LICENCE
+
+Copyright (c) 2014 S3IT, University of Zurich. All rights reserved.
+
+You may copy, distribute and modify this file according to the GNU GPL
+version 3 or (at your option) any later version.
+See http://www.gnu.org/licenses/gpl.html for license details.
+
+=cut
+
+
+use strict;
+use English;
+use Getopt::Long;
+use IPC::Open2;
+use Pod::Usage;
+
+
+sub verbose ($$);
+sub in ($@);
+
+
+# provide default for options
+my $verbose = 0;
+my $lines = 0;
+Getopt::Long::Configure ('gnu_getopt', 'no_ignore_case');
+GetOptions (
+    'lines|n:i' => \$lines,
+    'verbose|v:+' => \$verbose,
+    'help' => sub { pod2usage(-verbose => $verbose); },
+    'version|V' => sub { print $PROGRAM_NAME .' '. $VERSION ."\n"; exit; }
+) or pod2usage();
+
+# usage if no args given
+pod2usage (-verbose => 0, -exitstatus => 1)
+    if ($#ARGV < 0);
+
+
+## main
+
+foreach my $host (@ARGV) {
+    my $done = 0;
+    my $sp = `ilom-address $host`;
+    my $pid = open2(\*CHLD_OUT, \*CHLD_IN, "ssh -T $sp");
+    my $prompt_seen = 0;
+
+    print CHLD_IN "show /SP/logs/event/list\r\n";
+    while (<CHLD_OUT>) {
+        # simulate key press on "pause" lines
+        if(/Paused: press any key to continue, or 'q' to quit/) {
+            print CHLD_IN "y";
+            next;
+        };
+        # ignore the first prompt we see -- it matches the `show` command above
+        if(/-> / and not $prompt_seen) {
+                $prompt_seen = 1;
+                next;
+        }
+        # output line we've just read
+        print STDOUT $host.':'.$_;
+
+        if( # returning prompt: `show` command done
+            (/-> / and $prompt_seen)
+            # or we've read enough lines
+            or ($lines > 0 and $done++ > $lines))
+        {
+            print CHLD_IN "exit\r\n";
+            close CHLD_OUT;
+            close CHLD_IN;
+            last;
+        };
+    };
+    waitpid($pid, 0);
+};
+
+
+## subroutines
+
+# verbose (LVL, MSG)
+#
+# Print MSG if LVL <= $verbose .
+#
+sub verbose ($$) {
+    my $lvl = shift;
+    my $msg = shift;
+    print $msg . "\n" if ($lvl <= $verbose);
+}
+
+
+# in (ITEM, LIST)
+#
+# return true if ITEM is 'eq' to some element in LIST
+#
+sub in ($@) {
+    my $item = shift;
+    return grep { $item eq $_ } @_;
+}
+
+
+__END__
