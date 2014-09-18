@@ -1,0 +1,147 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-# 
+# @(#)find-free-ips
+# 
+# 
+# Copyright (C) 2014, GC3, University of Zurich. All rights reserved.
+# 
+# 
+# This program is free software; you can redistribute it and/or modify it
+# under the terms of the GNU General Public License as published by the
+# Free Software Foundation; either version 2 of the License, or (at your
+# option) any later version.
+#
+# This program is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+# General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License along
+# with this program; if not, write to the Free Software Foundation, Inc.,
+# 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
+
+__docformat__ = 'reStructuredText'
+__author__ = 'Antonio Messina <antonio.s.messina@gmail.com>'
+
+from itertools import groupby
+from netaddr import IPNetwork, IPAddress
+from operator import itemgetter
+import argparse
+import copy
+import os
+
+
+default_networks = {
+    'gc3': 
+    { 'net': IPNetwork('192.168.160.0/22'),
+      'used': [],
+      'free': [], },
+    'mngt':
+    { 'net': IPNetwork('192.168.164.0/22'),
+    'used': [],
+      'free': [], },
+    'public':
+    { 'net': IPNetwork('130.60.24.0/24'),
+      'used': [],
+      'free': [], },
+    'es':
+    {'net': IPNetwork('10.129.0.0/16'),
+      'used': [],
+      'free': [], },     
+    'esmngt':
+    {'net': IPNetwork('10.128.0.0/16'),
+      'used': [],
+      'free': [], },     
+ }
+
+def parse_etc_hosts(fname, only_networks=None):
+    networks = copy.deepcopy(default_networks)
+
+    all_ips = []
+    with open(fname) as fd:
+        for line in fd:
+            linefields = line.strip().split()
+            try:
+                ip = IPAddress(linefields[0])
+                for net in networks:
+                    if only_networks and net not in only_networks:
+                        continue
+                    if ip in networks[net].get('net', []):
+                        networks[net]['used'].append(ip)
+            except:
+                continue
+
+    for name, net in networks.items():
+        if 'net' in net:
+            net['free'] = [ip for ip in net['net'] if ip not in net['used']]
+
+    return networks
+
+# ask for how_many in mngt and gc3, with the same last bit
+def find_good_ranges(main, how_many=10, secondary=None, gap=256*4):
+    good_ranges = []
+    # cfr. http://stackoverflow.com/questions/2154249/identify-groups-of-continuous-numbers-in-a-list
+    # 
+    for k, g in groupby(enumerate(main), lambda (i,x):x-i):
+        r = map(itemgetter(1), g)
+        if len(r) >= how_many:
+            if secondary is None:
+                yield r
+                # good_ranges.append(r)
+            else:
+                for ip in r:
+                    if IPAddress(ip+256*4) not in secondary:
+                        break
+                yield (r, [IPAddress(ip+gap) for ip in r])
+                # good_ranges.append((r, [IPAddress(ip+gap) for ip in r]))
+    # return good_ranges
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Find a set of consecutive free IPs on a network")
+    def is_valid_file(parser, path):
+        if not os.path.exists(path) or not os.access(path, os.R_OK):
+            parser.error("Unable to read file %s" % path)
+        else:
+            return path
+
+    parser.add_argument(dest='fname', metavar='FILE', help='hosts-like filename', type=lambda x: is_valid_file(parser, x))
+    parser.add_argument('-c', '--count', type=int, default=10, help='How many consecutive hosts')
+    parser.add_argument('--net', default='gc3', help="""Which network to use. Currently defined networks:
+    %s""" % str.join(', ', ["%s:%s" % (name, net['net']) for name, net in default_networks.items()]))
+    parser.add_argument('--mngt', help='Which management network to use, if any.')
+
+    def new_networks(parser, netstring):
+        fields = netstring.split(':')
+        if len(fields) != 2:
+            parser.error("Invalid format for argument '%s'. Should be in form 'name:A.B.C.D/N'" % netstring)
+        try:
+            result = {fields[0]: {'net': IPNetwork(fields[1]),
+                                  'free': [],
+                                  'used': [],}}
+            return result
+        except Exception as ex:
+            parser.error("Invalid argument %s: %s" % (fields[1], ex))
+            
+    parser.add_argument('--new-net', help="Define new network, using syntax 'name:A.B.C.D/N'", nargs='+', type=lambda x: new_networks(parser, x))
+
+    args = parser.parse_args()
+    for net in args.new_net:
+        default_networks.update(net)
+
+    for net in args.net, args.mngt:
+        if net and net not in default_networks:
+            parser.error("Network '%s' not defined." % net)
+
+    if args.mngt:
+        networks = parse_etc_hosts(args.fname, only_networks=[args.net, args.mngt])
+        ranges = find_good_ranges(networks[args.net]['free'], args.count,
+                                  networks[args.mngt]['free'], 
+                                  gap=networks[args.mngt]['net'].value - networks[args.net]['net'].value)
+        for r0, r1 in ranges:
+            print("{}: {} - {}, {} - {}".format(
+                len(r0), r0[0], r0[-1], r1[0], r1[-1]))
+    else:
+        networks = parse_etc_hosts(args.fname, only_networks=[args.net])
+        ranges = find_good_ranges(networks[args.net]['free'], args.count)
+        for r in ranges:
+            print("{}: {} - {}".format(len(r), r[0], r[-1]))
