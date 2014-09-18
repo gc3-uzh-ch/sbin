@@ -72,7 +72,7 @@ def parse_etc_hosts(fd, only_networks=None):
 
     for name, net in networks.items():
         if 'net' in net:
-            net['free'] = [ip for ip in net['net'] if ip not in net['used']]
+            net['free'] = [ip for ip in net['net'] if ip not in net['used'] and ip not in (net['net'].network, net['net'].broadcast)]
 
     return networks
 
@@ -143,7 +143,7 @@ if __name__ == "__main__":
             print("{}: {} - {}, {} - {}".format(
                 len(r0), r0[0], r0[-1], r1[0], r1[-1]))
     else:
-        networks = parse_etc_hosts(args.fname, only_networks=[args.net])
+        networks = parse_etc_hosts(args.file, only_networks=[args.net])
         args.file.close()
         ranges = find_good_ranges(networks[args.net]['free'], args.count)
         for r in ranges:
