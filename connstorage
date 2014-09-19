@@ -7,7 +7,7 @@
 # connstorage connects to a dothill/HP-P2000 controller 
 
 function Usage() {
-	echo -e "\n  connstorage lets you connect to a Dothill/HP-P2000 storage controller"
+	echo -e "\n  CONNSTORAGE lets you connect to a Dothill/HP-P2000 storage controller"
 	echo -e "\nUsage: connstorage [controller-name]"
 	echo -e "\nWhere controller-name is a DotHill controller as in the DNS"
 
@@ -49,5 +49,5 @@ case $1 in
 esac
 shift
 
-exec `pwd`sshspect --log_user -H 10.128.93.$IP -U "$U" -P "$P" "$@"
+exec `pwd`/sshspect --log_user -H 10.128.93.$IP -U "$U" -P "$P" "$@"
 #EOF
