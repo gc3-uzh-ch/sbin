@@ -165,6 +165,10 @@ expect {
 		send -- "$password\r\n"
 		exp_continue
 	}
+	-re ".*Are.*.*yes.*no.*" {
+		exp_send "yes\r"
+		exp_continue
+	}	
 	$prompt
 }
 
