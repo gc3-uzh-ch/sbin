@@ -21,9 +21,9 @@ function Usage() {
 		
 	echo -e "\nExamples"
 	echo -e "\n To run the 'show system' command on sclustre-ctrl-oss1-oss2-a'"	
-	echo -e " # connstorage -c sclustre-ctrl-oss1-oss2-a 'show system'"
+	echo -e " # connstorage sclustre-ctrl-oss1-oss2-a -c 'show system'"
 	echo -e "\n To enter an interactive session on sclustre-ctrl-oss3-oss4-b'"	
-	echo -e " # connstorage -c sclustre-ctrl-oss3-oss4-b -i"
+	echo -e " # connstorage sclustre-ctrl-oss3-oss4-b -i"
 	exit 1
 }
 
@@ -49,5 +49,5 @@ case $1 in
 esac
 shift
 
-exec sshspect --log_user -H 10.128.93.$IP -U "$U" -P "$P" "$@"
+exec `pwd`sshspect --log_user -H 10.128.93.$IP -U "$U" -P "$P" "$@"
 #EOF
