@@ -126,8 +126,9 @@ if __name__ == "__main__":
     parser.add_argument('--new-net', help="Define new network, using syntax 'name:A.B.C.D/N'", nargs='+', type=lambda x: new_networks(parser, x))
 
     args = parser.parse_args()
-    for net in args.new_net:
-        default_networks.update(net)
+    if args.new_net:
+        for net in args.new_net:
+            default_networks.update(net)
 
     for net in args.net, args.mngt:
         if net and net not in default_networks:
