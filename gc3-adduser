@@ -18,12 +18,16 @@ Options:
 
   --password, -p HASH
      Use HASH as the (crypted) password hash.  If this option is not
-     given, a random password will be used.
+     given, a random password will be generated and printed to STDOUT.
 
   --uid, -u UIDNUM
-     Use this number as the account's UID and GID.  If this option is
-     not given, the UID/GID is automatically selected: we take the max
+     Use this number as the account's UID.  If this option is not
+     given, the UID/GID is automatically selected: we take the max
      used UID and add +1 to it.
+
+  --gid, -g GIDNUM
+     Use this number as the account's primary GID.  If this option is
+     not given, the GID is equal to the UID.
 
   --test, -n
       Do not make any modification to the system; just print what
@@ -76,8 +80,8 @@ find_next_uid () {
 
 ## parse command-line
 
-short_opts='hnp:s:u:x'
-long_opts='no-act,password:,ssh-key:,test,uid:,help,debug'
+short_opts='g:hnp:s:u:x'
+long_opts='gid:,no-act,password:,ssh-key:,test,uid:,help,debug'
 
 if [ "x$(getopt -T)" != 'x--' ]; then
     # GNU getopt
@@ -101,6 +105,7 @@ while [ $# -gt 0 ]; do
         --password|-p) pwdhash="$2"; shift ;;
         --ssh*|-s) ssh_pubkey="$2"; shift ;;
         --uid|-u) uid="$2"; shift ;;
+        --gid|-g) gid="$2"; shift ;;
         --no-act|--test|-n) maybe='echo' ;;
         --debug|-x) set -x ;;
         --help|-h) usage; exit 0 ;;
@@ -120,7 +125,7 @@ gecos="$@"
 ## main
 
 case "$(hostname)" in
-    ocikbfs*)
+    ocikbfs*|fs*)
         # ok, nothing to do
         ;;
     *)
@@ -128,6 +133,7 @@ case "$(hostname)" in
         ;;
 esac
 
+require_command getent
 require_command ldapadd
 require_command mktemp
 require_command pwgen
@@ -154,7 +160,7 @@ $maybe mkdir "${username}"
 
 $maybe mkdir "${username}/.ssh"
 if [ -n "$ssh_pubkey" ]; then
-    cp "$ssh_pubkey" "${username}/.ssh/authorized_keys"
+    $maybe cp "$ssh_pubkey" "${username}/.ssh/authorized_keys"
 fi
 
 
@@ -162,11 +168,17 @@ fi
 tmp=$(mktemp -t ${PROG}.XXXXXX.ldif) \
     || die 1 "Cannot make temporary file"
 
-if [ -n "$uid" ]; then
+if [ -z "$uid" ]; then
     uid=$(find_next_uid)
+    echo "Using UID ${uid}"
 fi
 
-if [ -n "$pwdhash" ]; then
+if [ -z "$gid" ]; then
+    gid="${uid}"
+    echo "Using GID ${gid}"
+fi
+
+if [ -z "$pwdhash" ]; then
     password=$(pwgen --num-passwords=1 --secure 16)
     echo "Using random password: ${password}"
     pwdhash=$(echo "$password" | openssl passwd -1 -stdin)
@@ -182,7 +194,7 @@ objectClass: top
 userPassword: {crypt}$pwdhash
 loginShell: /bin/bash
 uidNumber: ${uid}
-gidNumber: ${uid}
+gidNumber: ${gid}
 homeDirectory: /home/${username}
 gecos: ${fullname},${gecos}
 
@@ -192,12 +204,12 @@ objectClass: posixGroup
 objectClass: top
 cn: ${username}
 userPassword: {crypt}x
-gidNumber: ${uid}
+gidNumber: ${gid}
 memberUid: ${username}
 EOF
 
 #### FIXME: should update the `cleanup` procedure to remove the entry from LDAP??
-$maybe ldapadd -H ldap://ocikbfs.uzh.ch/ -D cn=root,dc=gc3,dc=uzh,dc=ch -y /etc/ldap.secret -f "$tmp"
+$maybe ldapadd -H ldap://localhost/ -D cn=root,dc=gc3,dc=uzh,dc=ch -y /etc/ldap.secret -f "$tmp"
 
 $maybe rm -f "$tmp"
 
@@ -205,10 +217,12 @@ $maybe rm -f "$tmp"
 # fix permissions on home dir
 
 cd /srv/nfs/home
-$maybe chown -R ${username}:${username} "${username}"
+$maybe chown ${uid}:${gid} "${username}"
 $maybe chmod u=rwx,g=rwsx,o=rx "${username}"
 $maybe chmod 0700 "${username}/.ssh"
-$maybe chmod 0600 "${username}/.ssh/authorized_keys"
+if test -r "${username}/.ssh/authorized_keys"; then
+    $maybe chmod 0600 "${username}/.ssh/authorized_keys"
+fi
 
 # all done, no cleanup necessary if we stop now
 trap "" EXIT INT ABRT TERM
