@@ -24,9 +24,25 @@ Options:
 
 =over 4
 
-=item --lines, -n I<NUM>
+=item --after, -a I<TIMESTAMP>
 
-Limit output to I<NUM> lines.
+Do not output records earlier than the specified I<TIMESTAMP>.
+
+I<TIMESTAMP> must follow the pattern 'Jun 30 11:07:39 2000', i.e.,
+Month name, Day of the month, hours, minutes, seconds, 4-digit year.
+The parts may be separated by spaces or underscore characters.
+
+=item --before, -b I<TIMESTAMP>
+
+Do not output records later than the specified I<TIMESTAMP>.
+
+I<TIMESTAMP> must follow the pattern 'Jun 30 11:07:39 2000', i.e.,
+Month name, Day of the month, hours, minutes, seconds, 4-digit year.
+The parts may be separated by spaces or underscore characters.
+
+=item --records, -n I<NUM>
+
+Limit output to I<NUM> log records.
 
 =item --help
 
@@ -61,18 +77,24 @@ use English;
 use Getopt::Long;
 use IPC::Open2;
 use Pod::Usage;
+use Time::Local;
 
 
+sub parse_timestamp($);
 sub verbose ($$);
 sub in ($@);
 
 
 # provide default for options
 my $verbose = 0;
-my $lines = 0;
+my $records = 0;
+my $after = undef;
+my $before = undef;
 Getopt::Long::Configure ('gnu_getopt', 'no_ignore_case');
 GetOptions (
-    'lines|n:i' => \$lines,
+    'after|a:s'   => \$after,
+    'before|b:s'  => \$before,
+    'records|n:i' => \$records,
     'verbose|v:+' => \$verbose,
     'help' => sub { pod2usage(-verbose => $verbose); },
     'version|V' => sub { print $PROGRAM_NAME .' '. $VERSION ."\n"; exit; }
@@ -82,34 +104,70 @@ GetOptions (
 pod2usage (-verbose => 0, -exitstatus => 1)
     if ($#ARGV < 0);
 
+$after = parse_timestamp($after) if $after;
+$before = parse_timestamp($before) if $before;
+
 
 ## main
 
+my $CONTINUATION_LINE_PREFIX = ' ' x 6;
+
 foreach my $host (@ARGV) {
-    my $done = 0;
+    verbose (1, "Getting address of ILOM SP for host '$host' ...");
     my $sp = `ilom-address $host`;
+    verbose (1, "Connecting to ILOM SP '$sp' ...");
     my $pid = open2(\*CHLD_OUT, \*CHLD_IN, "ssh -T $sp");
+
+    my $record = undef;
+    my $done = 0;
     my $prompt_seen = 0;
 
     print CHLD_IN "show /SP/logs/event/list\r\n";
     while (<CHLD_OUT>) {
+        verbose (3, "Read line '$_'");
         # simulate key press on "pause" lines
         if(/Paused: press any key to continue, or 'q' to quit/) {
             print CHLD_IN "y";
             next;
-        };
+        }
         # ignore the first prompt we see -- it matches the `show` command above
         if(/-> / and not $prompt_seen) {
                 $prompt_seen = 1;
                 next;
         }
-        # output line we've just read
-        print STDOUT $host.':'.$_;
+        # a new record starts with the record number
+        if (/^[0-9]+\s+/) {
+            # output current record if any
+            print STDOUT $record if $record;
+            $done++;
+            # ignore record if after/before limits are in effect
+            my ($recnum, $dow, $month, $dom, $time, $year,
+                $source, $type, $severity) = split;
+            my $timestamp = parse_timestamp ("$month $dom $time $year");
+            if ($after and ($timestamp < $after))  {
+                verbose(2, "Ignoring line '$_': record timestamp is before UNIX epoch $after");
+                $record = undef;
+                next;
+            };
+            if ($before and ($timestamp > $before)) {
+                verbose(2, "Ignoring line '$_': record timestamp is after UNIX epoch $before");
+                $record = undef;
+                next;
+            };
+            # start new record
+            $record = $_;
+            next;
+        }
+
+        if (/$CONTINUATION_LINE_PREFIX/ and $record) {
+            $record .= $_;
+            next;
+        }
 
         if( # returning prompt: `show` command done
             (/-> / and $prompt_seen)
             # or we've read enough lines
-            or ($lines > 0 and $done++ > $lines))
+            or ($records > 0 and $done > $records))
         {
             print CHLD_IN "exit\r\n";
             close CHLD_OUT;
@@ -117,6 +175,10 @@ foreach my $host (@ARGV) {
             last;
         };
     };
+    # output last record if any
+    print STDOUT $record if $record;
+
+    # do not leave zombie processes around
     waitpid($pid, 0);
 };
 
@@ -130,7 +192,7 @@ foreach my $host (@ARGV) {
 sub verbose ($$) {
     my $lvl = shift;
     my $msg = shift;
-    print $msg . "\n" if ($lvl <= $verbose);
+    print STDERR $msg . "\n" if ($lvl <= $verbose);
 }
 
 
@@ -143,5 +205,42 @@ sub in ($@) {
     return grep { $item eq $_ } @_;
 }
 
+
+# used in `parse_timestamp` below
+our %MONTHS = (
+    Jan => 0,
+    Feb => 1,
+    Mar => 2,
+    Apr => 3,
+    May => 4,
+    Jun => 5,
+    Jul => 6,
+    Aug => 7,
+    Sep => 8,
+    Sept=> 8,
+    Oct => 9,
+    Nov => 10,
+    Dec => 11
+    );
+
+# parse_timestamp(TIMESTAMP)
+#
+# Parse timestamps and return corresponding UNIX epoch.
+# TIMESTAMP must follow the pattern 'Jun 30 11:07:39 2000', i.e.,
+# Month name, Day of the month, hours, minutes, seconds, 4-digit year.
+# The parts may be separated by spaces or underscore characters.
+# An optional day-of-the-week (e.g., "Mon") may appear at the
+# beginning of the string.
+#
+sub parse_timestamp($) {
+    my $ts = shift;
+
+    # remove DoW, if any
+    $ts =~ s/^(Mon|Tue|Wed|Thu|Fri|Sat|Sun)[ _]+//;
+
+    my ($month, $day_of_month, $time, $year) = split(qr/[ _]+/, $ts);
+    my ($hour,$min,$sec) = split(":",$time);
+    return timelocal($sec,$min,$hour,$day_of_month,$MONTHS{$month},$year);
+}
 
 __END__
