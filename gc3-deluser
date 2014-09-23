@@ -1,0 +1,147 @@
+#! /bin/sh
+#
+PROG="$(basename $0)"
+
+usage () {
+cat <<EOF
+Usage: $PROG [options] username [username ...]
+
+Delete specified users and their home directory.
+
+This procedure is specific to the GC3's OCIKBFS LDAP server
+and should not be used elsewhere.
+
+Options:
+
+  --keep-home, -k
+      Do not delete the home directory.
+
+  --test, -n
+      Do not make any modification to the system; just print what
+      would be done.
+
+  --help, -h  Print this help text.
+
+EOF
+}
+
+
+## helper functions
+die () {
+  rc="$1"
+  shift
+  (echo -n "$PROG: ERROR: ";
+      if [ $# -gt 0 ]; then echo "$@"; else cat; fi) 1>&2
+  exit $rc
+}
+
+warn () {
+  (echo -n "$PROG: WARNING: ";
+      if [ $# -gt 0 ]; then echo "$@"; else cat; fi) 1>&2
+}
+
+have_command () {
+  type "$1" >/dev/null 2>/dev/null
+}
+
+require_command () {
+  if ! have_command "$1"; then
+    die 1 "Could not find required command '$1' in system PATH. Aborting."
+  fi
+}
+
+is_absolute_path () {
+    expr match "$1" '/' >/dev/null 2>/dev/null
+}
+
+
+## parse command-line
+
+short_opts='hknvx'
+long_opts='keep,keep-home,no-act,test,verbose,help,debug'
+
+if [ "x$(getopt -T)" != 'x--' ]; then
+    # GNU getopt
+    args=$(getopt --name "$PROG" --shell sh -l "$long_opts" -o "$short_opts" -- "$@")
+    if [ $? -ne 0 ]; then
+        die 1 "Type '$PROG --help' to get usage information."
+    fi
+    # use 'eval' to remove getopt quoting
+    eval set -- $args
+else
+    # old-style getopt, use compatibility syntax
+    args=$(getopt "$short_opts" "$@")
+    if [ $? -ne 0 ]; then
+        die 1 "Type '$PROG --help' to get usage information."
+    fi
+    set -- $args
+fi
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --keep*|-k) keep='y' ;;
+        --no-act|--test|-n) maybe='echo' ;;
+        --verbose|-v) verbose='-v' ;;
+        --debug|-x) set -x ;;
+        --help|-h) usage; exit 0 ;;
+        --) shift; break ;;
+    esac
+    shift
+done
+
+if [ "$#" -lt 1 ]; then
+    die 1 "Usage: ${PROG} username [username ...]"
+fi
+
+
+## main
+
+case "$(hostname)" in
+    ocikbfs*|fs*.gc3)
+        # ok, nothing to do
+        ;;
+    *)
+        die 3 "This script is specific to the OCIKBFS.uzh.ch LDAP servers."
+        ;;
+esac
+
+require_command getent
+require_command ldapdeleteuser
+
+
+# ensure we can delete the home directories
+if [ "$keep" != 'y' ]; then
+    test -w /srv/nfs/home \
+        || die 2 "Cannot write in NFS home directory folder"
+    cd /srv/nfs/home \
+        || die 2 "Cannot change to NFS home directory folder"
+fi
+
+
+# temporary output for `getent passwd`
+tmp=$(mktemp -t ${PROG}.XXXXXX.passwd) \
+    || die 1 "Cannot make temporary file"
+# if the script is interrupted, ensure we leave no cruft around
+trap "cleanup" INT TERM EXIT ABRT
+cleanup () {
+    if [ -n "$tmp" ]; then
+        $maybe rm -f "$tmp"
+    fi
+}
+
+
+# actually delete
+for username in "$@"; do
+    if getent passwd "$username" > "$tmp"; then
+        if [ -n "$verbose" ]; then
+            echo "Deleting user $username ..."
+        fi
+        $maybe ldapdeleteuser "$username"
+        if [ "$keep" != 'y' ]; then
+            home=$(cut -d: -f6 < "$tmp" | sed -re 's:^/home/::')
+            $maybe rm -rf $verbose "$home"
+        fi
+    else
+        warn "Cannot find user '$username' - ignoring."
+    fi
+done
