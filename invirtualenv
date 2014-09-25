@@ -1,0 +1,91 @@
+#! /bin/sh
+#
+PROG="$(basename $0)"
+
+usage () {
+cat <<EOF
+Usage: $PROG DIR CMD [ARG ...]
+
+Run CMD (with its optional ARGs) within the Python virtual env located
+at DIR.
+
+Options:
+
+  --help, -h  Print this help text.
+
+EOF
+}
+
+
+## helper functions
+die () {
+  rc="$1"
+  shift
+  (echo -n "$PROG: ERROR: ";
+      if [ $# -gt 0 ]; then echo "$@"; else cat; fi) 1>&2
+  exit $rc
+}
+
+warn () {
+  (echo -n "$PROG: WARNING: ";
+      if [ $# -gt 0 ]; then echo "$@"; else cat; fi) 1>&2
+}
+
+have_command () {
+  type "$1" >/dev/null 2>/dev/null
+}
+
+require_command () {
+  if ! have_command "$1"; then
+    die 1 "Could not find required command '$1' in system PATH. Aborting."
+  fi
+}
+
+
+## parse command-line
+
+short_opts='hx'
+long_opts='help,debug'
+
+if [ "x$(getopt -T)" != 'x--' ]; then
+    # GNU getopt
+    args=$(getopt --name "$PROG" --shell sh -l "$long_opts" -o "$short_opts" -- "$@")
+    if [ $? -ne 0 ]; then
+        die 1 "Type '$PROG --help' to get usage information."
+    fi
+    # use 'eval' to remove getopt quoting
+    eval set -- $args
+else
+    # old-style getopt, use compatibility syntax
+    args=$(getopt "$short_opts" "$@")
+    if [ $? -ne 0 ]; then
+        die 1 "Type '$PROG --help' to get usage information."
+    fi
+    set -- $args
+fi
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --debug|-x) set -x ;;
+        --help|-h) usage; exit 0 ;;
+        --) shift; break ;;
+    esac
+    shift
+done
+
+if [ "$#" -lt 1 ]; then
+    die 1 "Usage: ${PROG} DIR CMD [ARG ...]"
+fi
+
+
+## main
+
+ve="$1"; shift
+if ! [ -d "$ve" ]; then
+    die 2 "Path '$ve' is not a directory!"
+fi
+if ! [ -r "$ve"/bin/activate ]; then
+    die 2 "No 'bin/activate' script found in directory '$ve'"
+fi
+
+(. "$ve"/bin/activate; "$@")
