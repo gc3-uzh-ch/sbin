@@ -54,12 +54,14 @@ default_networks = {
       'free': [], },     
  }
 
-def parse_etc_hosts(fd, only_networks=None):
+def parse_etc_hosts(fd, only_networks=None, skip_comments=True):
     networks = copy.deepcopy(default_networks)
 
     all_ips = []
     for line in fd:
         linefields = line.strip().split()
+        if not skip_comments:
+            linefields = line.strip('#').strip().split()
         try:
             ip = IPAddress(linefields[0])
             for net in networks:
@@ -124,8 +126,10 @@ if __name__ == "__main__":
             parser.error("Invalid argument %s: %s" % (fields[1], ex))
             
     parser.add_argument('--new-net', help="Define new network, using syntax 'name:A.B.C.D/N'", nargs='+', type=lambda x: new_networks(parser, x))
+    parser.add_argument('--include-comments', help='Also parse commented lines (like "# 1.2.3.4")', action='store_false', dest='skip_comments', default=True)
 
     args = parser.parse_args()
+
     if args.new_net:
         for net in args.new_net:
             default_networks.update(net)
@@ -135,7 +139,7 @@ if __name__ == "__main__":
             parser.error("Network '%s' not defined." % net)
 
     if args.mngt:
-        networks = parse_etc_hosts(args.file, only_networks=[args.net, args.mngt])
+        networks = parse_etc_hosts(args.file, only_networks=[args.net, args.mngt], skip_comments=args.skip_comments)
         args.file.close()
         ranges = find_good_ranges(networks[args.net]['free'], args.count,
                                   networks[args.mngt]['free'], 
@@ -144,7 +148,7 @@ if __name__ == "__main__":
             print("{}: {} - {}, {} - {}".format(
                 len(r0), r0[0], r0[-1], r1[0], r1[-1]))
     else:
-        networks = parse_etc_hosts(args.file, only_networks=[args.net])
+        networks = parse_etc_hosts(args.file, only_networks=[args.net], skip_comments=args.skip_comments)
         args.file.close()
         ranges = find_good_ranges(networks[args.net]['free'], args.count)
         for r in ranges:
