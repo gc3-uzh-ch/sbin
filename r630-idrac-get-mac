@@ -1,0 +1,154 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-#
+# @(#)r630-idrac-get-mac
+#
+#
+# Copyright (C) 2015, GC3, University of Zurich. All rights reserved.
+#
+#
+# This program is free software; you can redistribute it and/or modify it
+# under the terms of the GNU General Public License as published by the
+# Free Software Foundation; either version 2 of the License, or (at your
+# option) any later version.
+#
+# This program is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+# General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License along
+# with this program; if not, write to the Free Software Foundation, Inc.,
+# 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
+
+__docformat__ = 'reStructuredText'
+__author__ = 'Antonio Messina <antonio.s.messina@gmail.com>'
+
+import sys
+import argparse
+import xml.etree.ElementTree as ET
+
+
+def build_dhcp_conf(hostname, sp_ip, sp_mac, host_ip, host_mac, domain):
+    sp_line = ["host sp-%s {" % hostname,
+               "hardware ethernet %s;" % sp_mac,
+               "fixed-address %s;" % sp_ip,
+               "}"]
+    host_line = ["host %s {" % hostname,
+                 "hardware ethernet %s;" % host_mac,
+                 "fixed-address %s;" % host_ip,
+                 'send host-name "%s%s";' % (hostname,
+                                             '.'+domain if domain else ''),
+                 "}"]
+    return "%s\n%s" % (str.join(' ', sp_line), str.join(' ', host_line))
+
+
+def build_hosts_conf(hostname, sp_ip, sp_mac, host_ip, host_mac, domain):
+    lines = ["%s    sp-%s.mngt sp-%s" % (sp_ip, hostname, hostname)]
+    fqdn = "%s%s" % (hostname, '.'+domain if domain else '')
+    if fqdn == hostname:
+        lines.append("%s    %s" % (host_ip, hostname))
+    else:
+        lines.append("%s    %s %s" % (host_ip, fqdn, hostname))
+
+    return str.join('\n', lines)
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        description="""
+Parse R630 iDRAC hwinventory file, gather MAC addresses and produce snippets
+for DHCP configuration file and /etc/hosts.
+
+The file parsed by this tool is the output of the command:
+
+    racadm hwinventory export -f <hwinventory.xml>
+
+You need to provide the path to the <hwinventory.xml> file, the IP of both
+the iDRAC (`--sp-ip`) and the host (`--host-ip`), the hostname (`--name`)
+and at least one of `--dhcp` or `hosts` options.
+
+By default the script will use the MAC address of the first interface in UP
+state, but you can define the correct interface with option `-x`, for instance:
+
+    %s -x 1-2-1 ...
+        """ % sys.argv[0],
+        formatter_class=argparse.RawDescriptionHelpFormatter)
+
+    parser.add_argument("-f", "--file",
+                        dest="xmlconf",
+                        required=True,
+                        metavar="PATH",
+                        help="Path to the XML inventory file.")
+    parser.add_argument("-n", "--name",
+                        dest="hostname",
+                        required=True,
+                        help="""Hostname of the new host. Hostname of the SP
+                        will be in the form `sp-<hostname>`""")
+    parser.add_argument("-i", "--host-ip",
+                        metavar="IP",
+                        dest="host_ip",
+                        required=True,
+                        help="IP Address of the new host")
+    parser.add_argument("-s", "--sp-ip",
+                        metavar="IP",
+                        dest="sp_ip",
+                        required=True,
+                        help="IP Address of the iDRAC of the new host")
+    parser.add_argument('-x', '--nic-index',
+                        help="""Specify the index of the NIC to be used for
+                        host interface. If not provided, the script will try
+                        to identify which port is in Up state. If more ports
+                        are in UP, the first one will be used. If no interface
+                        is UP, the first one will be used.""")
+    parser.add_argument('-d', '--domain',
+                        default='gc3',
+                        help="""Domain to be added to `send host-name` DHCP
+                        option. Default: `%(default)s`""")
+    parser.add_argument('--hosts',
+                        action='store_true',
+                        help="Print a snippet for the /etc/hosts file")
+    parser.add_argument('--dhcp',
+                        action='store_true',
+                        help="Print a snippet for the DHCP configuration file")
+
+    cfg = parser.parse_args()
+
+    tree = ET.parse(cfg.xmlconf)
+    root = tree.getroot()
+    cfg.sp_mac = root.find(".//Component[@Classname='DCIM_iDRACCardView']"
+                           "/PROPERTY[@NAME='PermanentMACAddress']/VALUE").text
+
+    if cfg.nic_index:
+        cfg.host_macs = root.findall(
+            ".//Component[@Classname='DCIM_NICView'][@Key='NIC.Integrated.%s']"
+            "/PROPERTY[@NAME='PermanentMACAddress']/VALUE" % cfg.nic_index)
+    else:
+        cfg.host_macs = []
+        nics = root.findall(".//Component[@Classname='DCIM_NICView']")
+        for nic in nics:
+            if nic.find(".//PROPERTY[@NAME='LinkSpeed']/VALUE").text != '0':
+                cfg.host_macs.append(
+                    nic.find(".//PROPERTY[@NAME='PermanentMACAddress']/VALUE"))
+        if not cfg.host_macs:
+            cfg.host_macs = root.findall(
+                ".//Component[@Classname='DCIM_NICView']"
+                "/PROPERTY[@NAME='PermanentMACAddress']/VALUE")
+
+    cfg.host_mac = cfg.host_macs[0].text
+
+    print('')
+    if cfg.dhcp:
+        print(build_dhcp_conf(cfg.hostname,
+                              cfg.sp_ip,
+                              cfg.sp_mac,
+                              cfg.host_ip,
+                              cfg.host_mac,
+                              cfg.domain))
+    print('')
+    if cfg.hosts:
+        print(build_hosts_conf(cfg.hostname,
+                               cfg.sp_ip,
+                               cfg.sp_mac,
+                               cfg.host_ip,
+                               cfg.host_mac,
+                               cfg.domain))
