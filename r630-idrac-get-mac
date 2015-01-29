@@ -136,16 +136,16 @@ state, but you can define the correct interface with option `-x`, for instance:
 
     cfg.host_mac = cfg.host_macs[0].text
 
-    print('')
     if cfg.dhcp:
+        print('')
         print(build_dhcp_conf(cfg.hostname,
                               cfg.sp_ip,
                               cfg.sp_mac,
                               cfg.host_ip,
                               cfg.host_mac,
                               cfg.domain))
-    print('')
     if cfg.hosts:
+        print('')
         print(build_hosts_conf(cfg.hostname,
                                cfg.sp_ip,
                                cfg.sp_mac,
