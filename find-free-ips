@@ -1,11 +1,11 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-# 
+# -*- coding: utf-8 -*-#
 # @(#)find-free-ips
-# 
-# 
+#
+#
 # Copyright (C) 2014, GC3, University of Zurich. All rights reserved.
-# 
-# 
+#
+#
 # This program is free software; you can redistribute it and/or modify it
 # under the terms of the GNU General Public License as published by the
 # Free Software Foundation; either version 2 of the License, or (at your
@@ -32,7 +32,7 @@ import os
 import sys
 
 default_networks = {
-    'gc3': 
+    'gc3':
     { 'net': IPNetwork('192.168.160.0/22'),
       'used': [],
       'free': [], },
@@ -47,7 +47,7 @@ default_networks = {
     'es':
     {'net': IPNetwork('10.129.0.0/16'),
      'used': [],
-     'free': [], },     
+     'free': [], },
     'esmngt':
     {'net': IPNetwork('10.128.0.0/16'),
      'used': [],
@@ -86,7 +86,7 @@ def parse_etc_hosts(fd, only_networks=None, skip_comments=True):
 def find_good_ranges(main, how_many=10, secondary=None, gap=256*4):
     good_ranges = []
     # cfr. http://stackoverflow.com/questions/2154249/identify-groups-of-continuous-numbers-in-a-list
-    # 
+    #
     for k, g in groupby(enumerate(main), lambda (i,x):x-i):
         r = map(itemgetter(1), g)
         if len(r) >= how_many:
@@ -95,9 +95,10 @@ def find_good_ranges(main, how_many=10, secondary=None, gap=256*4):
                 # good_ranges.append(r)
             else:
                 for ip in r:
-                    if IPAddress(ip+256*4) not in secondary:
+                    if IPAddress(ip+gap) not in secondary:
                         break
-                yield (r, [IPAddress(ip+gap) for ip in r])
+                else:
+                    yield (r, [IPAddress(ip+gap) for ip in r])
                 # good_ranges.append((r, [IPAddress(ip+gap) for ip in r]))
     # return good_ranges
 
@@ -128,7 +129,7 @@ if __name__ == "__main__":
             return result
         except Exception as ex:
             parser.error("Invalid argument %s: %s" % (fields[1], ex))
-            
+
     parser.add_argument('--new-net', help="Define new network, using syntax 'name:A.B.C.D/N'", nargs='+', type=lambda x: new_networks(parser, x))
     parser.add_argument('--include-comments', help='Also parse commented lines (like "# 1.2.3.4")', action='store_false', dest='skip_comments', default=True)
 
@@ -146,7 +147,7 @@ if __name__ == "__main__":
         networks = parse_etc_hosts(args.file, only_networks=[args.net, args.mngt], skip_comments=args.skip_comments)
         args.file.close()
         ranges = find_good_ranges(networks[args.net]['free'], args.count,
-                                  networks[args.mngt]['free'], 
+                                  networks[args.mngt]['free'],
                                   gap=networks[args.mngt]['net'].value - networks[args.net]['net'].value)
         for r0, r1 in ranges:
             print("{}: {} - {}, {} - {}".format(
