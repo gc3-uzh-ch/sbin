@@ -1,0 +1,233 @@
+#! /usr/bin/env python
+#
+##
+# Copyright (C) 2015 S3IT, Zentrale Informatik, University of Zurich.
+# All rights reserved.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU Lesser General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/#GPL>.
+##
+"""
+Merge two or more files in SSH'd 'known_hosts' format,
+possibly filtering the resulting output.
+"""
+__docformat__ = 'reStructuredText'
+__author__ = 'Riccardo Murri <riccardo.murri@uzh.ch>'
+__version__ = '1.0'
+
+
+import argparse
+from collections import defaultdict
+from functools import wraps
+import logging
+import re
+from socket import getaddrinfo, gaierror
+import sys
+
+
+## aux functions
+
+def split_comma_separated(items):
+    result = []
+    for item in items:
+        result += item.split(',')
+    return result
+
+def match(names, domains, regexps, default):
+    """
+    Return ``True`` if any of the names:
+    - either ends with a string in `domains`,
+    - or matches one of the (anchored) `regexps`.
+
+    If `domains` and `regexps` are both the empty lists, then return
+    `default`.
+    """
+    if not domains and not regexps:
+        return default
+    for name in names:
+        if domains:
+            for domain in domains:
+                if name.endswith(domain):
+                    return True
+        if regexps:
+            for regexp in regexps:
+                if regexp.match(name):
+                    return True
+    return False
+
+# need a specialized version for functions that take a single list
+# parameter, otherwise we get an error that objects of type `list` are
+# non-hashable
+def _memoize_names(fn):
+    @wraps(fn)
+    def wrapper(names):
+        names_ = tuple(names)
+        if names_ not in _cache[fn]:
+            _cache[fn][names_] = fn(names_)
+        return _cache[fn][names_]
+    return wrapper
+_cache = defaultdict(dict)
+
+def _hostinfo(name):
+    result = []
+    try:
+        for data in getaddrinfo(name, None):
+            result.append(data[4][0])
+    except gaierror, err:
+        logging.error("Cannot get address information for host '%s'", name)
+    return set(result)
+
+@_memoize_names
+def hostinfos(names):
+    result = set(names)
+    for name in names:
+        result.update(_hostinfo(name))
+    return result
+
+@_memoize_names
+def cname(hostnames):
+    candidates = []
+    for name in hostnames:
+        if _IPV4ADDR_RE.match(name):
+            # skip numeric addresses
+            continue
+        if '.' not in name:
+            candidates.append(name)
+        else:
+            uqhost, domain = name.split('.', 1)
+            candidates.append(uqhost)
+    # shortest candidate is the canonical one
+    return sorted((candidates if candidates else hostnames),
+                  key=(lambda nm: len(nm)))[0]
+
+_IPV4ADDR_RE = re.compile('[0-9]+.[0-9]+.[0-9]+.[0-9]+')
+
+
+## main
+
+cmdline = argparse.ArgumentParser(description=__doc__)
+cmdline.add_argument('input', nargs='+', metavar='FILE',
+                     help=('Read and join these files.'))
+cmdline.add_argument('-a','--allow', metavar='DOMAIN',
+                     dest='allow_domains', action='append', default=[],
+                     help=(
+                         'Only keep hosts in the given DNS domain.'
+                         ' Separate multiple domains with a comma,'
+                         ' or repeat the option multiple times.'
+                       ))
+cmdline.add_argument('-A','--allow-re', metavar='REGEXP',
+                     dest='allow_re', action='append', default=[],
+                     help=(
+                         'Only keep hosts whose FQDN matches'
+                         ' the given regular expression.'
+                         ' Repeat the option multiple times to'
+                         ' allow several patterns.'
+                       ))
+cmdline.add_argument(
+    "-v", "--verbose", action='count', default=0,
+    help=(
+        "Log program actions at increasing detail."
+        " Repeat thrice or more for debug-level info."
+    )
+)
+cmdline.add_argument('-x','--exclude', metavar='DOMAIN',
+                     dest='exclude_domains', action='append', default=[],
+                     help=(
+                         'Only keep hosts in the given DNS domain.'
+                         ' Separate multiple domains with a comma,'
+                         ' or repeat the option multiple times.'
+                       ))
+cmdline.add_argument('-X','--exclude-re', metavar='REGEXP',
+                     dest='exclude_re', action='append', default=[],
+                     help=(
+                         'Only keep hosts whose FQDN matches'
+                         ' the given regular expression.'
+                         ' Repeat the option multiple times to'
+                         ' allow several patterns.'
+                       ))
+args = cmdline.parse_args()
+
+# make logging as verbose as requested
+logging.basicConfig(
+    format="%(module)s: %(levelname)s: %(message)s",
+    level=logging.ERROR - 10 * args.verbose)
+
+# build list of allowed/excluded DNS domains
+allow_domains = split_comma_separated(args.allow_domains)
+exclude_domains = split_comma_separated(args.exclude_domains)
+
+# build list of allowed/excluded DNS domains
+allow_re = [ re.compile(regex) for regex in args.allow_re ]
+exclude_re = [ re.compile(regex) for regex in args.exclude_re ]
+
+ssh_keys = defaultdict(dict)
+for path in args.input:
+    with open(path, 'r') as file:
+        for nr, line in enumerate(file):
+            # parse line into host names, key type+data, and optional comment
+            line = line.strip()
+            parts = line.split()
+            if len(parts) < 3 or len(parts) > 4:
+                logging.error("Malformed line '%s' (line nr. %d) in file '%s': ignoring it.",
+                          line, nr, path)
+                continue
+            names = parts[0].split(',')
+            keytype = parts[1]
+            keydata = parts[2]
+            if len(parts) == 4:
+                comment = parts[3]
+            else:
+                comment = ''
+            # check that *at least one* name passes the "allowed" patterns
+            if not match(names, allow_domains, allow_re, True):
+                logging.info(
+                    "Ignoring key for host %s ('%s', line nr. %d):"
+                    " does not match any allowed pattern", names, path, nr)
+                continue
+            # check that *no* name matches the "excluded" patterns
+            if match(names, exclude_domains, exclude_re, False):
+                logging.info(
+                    "Ignoring key for host %s ('%s', line nr. %d):"
+                    " matches an exclusion pattern", names, path, nr)
+                continue
+            # now collect all host names and addresses
+            hostnames = hostinfos(names)
+            host = cname(hostnames)
+            #
+            if keytype not in ssh_keys[host]:
+                ssh_keys[host][keytype] = (hostnames, keydata, comment, path, nr)
+            else:
+                # key data conflict?
+                keydata_ = ssh_keys[host][keytype][1]
+                if keydata == keydata_:
+                    # key agree, only update host names
+                    hostnames_, keydata_, comment_, path_, nr_ = ssh_keys[host][keytype]
+                    ssh_keys[host][keytype] = (
+                        hostnames_.union(hostnames),
+                        keydata_,
+                        comment_ or comment,
+                        path_, nr_)
+                else:
+                    # conflict!
+                    logging.warning(
+                        "Key data of type '%s' for host '%s' in file '%s' (line %d)"
+                        " is not the same as key data for the same host in file '%s' (line %d)"
+                        " -- ignoring both!",
+                        keytype, host, path, nr,
+                        ssh_keys[host][keytype][3],
+                        ssh_keys[host][keytype][4],)
+                    del ssh_keys[host][keytype]
+for host in sorted(ssh_keys.keys()):
+    for kt in sorted(ssh_keys[host]):
+        dt = ssh_keys[host][kt]
+        print("%s %s %s %s" % (str.join(',', sorted(dt[0])), kt, dt[1], dt[2]))
