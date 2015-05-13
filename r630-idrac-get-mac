@@ -93,22 +93,30 @@ def update_inventory(hw, inventory_dir, hostname):
 
     sp = parse_files([inventory_dir], 'sp-%s.yaml' % hostname).hosts
     # SPs only have one interface
+    if not sp.values()[0] or 'interfaces' not in sp.values()[0]:
+        raise Exception("Invalid format for file %s" % sp.keys()[0])
     sp.values()[0]['interfaces'][0]['mac'] = hw.sp_mac
     hosts.update(sp)
-    
+
     # Same but for the host
     host = parse_files([inventory_dir], '%s.yaml' % hostname).hosts
+
+    if not host.values()[0] or 'interfaces' not in host.values()[0]:
+        raise Exception("Invalid format for file %s" % host.keys()[0])
     # HOSTs only have one interface
     ifaces = host.values()[0]['interfaces']
 
     eth0 = [iface for iface in ifaces if iface.get('iface') == 'eth0']
     if not eth0:
         eth0 = ifaces[0]
+    else:
+        eth0 = eth0[0]
+
     eth0['mac'] = hw.host_mac
     hosts.update(host)
 
     return hosts
-    
+
 
 def parse_hwinventory_file(fname, cfg):
     # parse and update inventory files
@@ -189,11 +197,26 @@ in UP state, but you can define the correct interface with option
 
     cfg = parser.parse_args()
 
+    # Check existence of files
+    if not os.path.exists(cfg.xmlconf):
+        parser.error("XML file `%s` not found." % cfg.xmlconf)
+
+    for fname in [os.path.join(cfg.inventory_dir, cfg.hostname+'.yaml'),
+                       os.path.join(cfg.inventory_dir, 'sp-'+ cfg.hostname+'.yaml')]:
+        if not os.path.exists(fname):
+            parser.error("Inventory file %s not found." % fname)
+
     # parse hwinventory file
-    hw = parse_hwinventory_file(cfg.xmlconf, cfg)
+    try:
+        hw = parse_hwinventory_file(cfg.xmlconf, cfg)
+    except Exception as ex:
+        parser.error("Error parsing XML file %s: %s" % (cfg.xmlconf, ex))
 
     # Update yaml inventory files
-    hosts = update_inventory(hw, cfg.inventory_dir, cfg.hostname)
+    try:
+        hosts = update_inventory(hw, cfg.inventory_dir, cfg.hostname)
+    except Exception as ex:
+        parser.error("Error parsing inventory files: %s" % ex)
 
     # Save the hosts
     dump_hosts(hosts)
