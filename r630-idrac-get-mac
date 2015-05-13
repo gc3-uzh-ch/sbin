@@ -27,48 +27,140 @@ import sys
 import argparse
 import xml.etree.ElementTree as ET
 
+from collections import namedtuple
+from fnmatch import fnmatch
+import os
+import sys
+import yaml
+import re
 
-def build_dhcp_conf(hostname, sp_ip, sp_mac, host_ip, host_mac, domain):
-    sp_line = ["host sp-%s {" % hostname,
-               "hardware ethernet %s;" % sp_mac,
-               "fixed-address %s;" % sp_ip,
-               "}"]
-    host_line = ["host %s {" % hostname,
-                 "hardware ethernet %s;" % host_mac,
-                 "fixed-address %s;" % host_ip,
-                 'send host-name "%s%s";' % (hostname,
-                                             '.'+domain if domain else ''),
-                 "}"]
-    return "%s\n%s" % (str.join(' ', sp_line), str.join(' ', host_line))
+HW = namedtuple('HW', ['sp_mac', 'host_macs', 'host_mac'])
 
+def walk_data_dir(path, pattern):
+    """Get a directory and returns a list of paths that matches `glob`"""
+    if os.path.isfile(path):
+        if fnmatch(path, pattern):
+            return [path]
+        else:
+            return []
 
-def build_hosts_conf(hostname, sp_ip, sp_mac, host_ip, host_mac, domain):
-    lines = ["%s    sp-%s.mngt sp-%s" % (sp_ip, hostname, hostname)]
-    fqdn = "%s%s" % (hostname, '.'+domain if domain else '')
-    if fqdn == hostname:
-        lines.append("%s    %s" % (host_ip, hostname))
+    paths = []
+    for root, dirs, fnames in os.walk(path):
+        paths.extend(os.path.join(root, fname)
+                     for fname in fnames if fnmatch(fname, pattern))
+        for d in dirs:
+            paths.extend(walk_data_dir(os.path.join(root, d), pattern))
+    return paths
+
+def parse_files(paths, pattern):
+    """
+    Parse all files in `paths`  matching the `pattern` *glob* expression.
+
+    Returns a 3-named-tuple containing::
+    - hosts: a dictionary with keys the name of the hosts, and values the yaml parsed data
+    - parsed_files: list of files correctly parsed
+    - error_files: list of files that were not correctly parsed
+    """
+    out = namedtuple('ParsedInventory', ['hosts', 'parsed_files', 'error_files'])
+
+    out.hosts = {}
+
+    all_files = reduce(lambda x, y: x+y,
+                       [walk_data_dir(path, pattern) for path in paths],
+                       [])
+
+    out.error_files = []
+    out.parsed_files = []
+    for fname in all_files:
+        with open(fname) as fd:
+            try:
+                out.hosts[fname] = yaml.load(fd)
+                out.parsed_files.append(fname)
+            except Exception:
+                out.error_files.append(fname)
+    return out
+
+def dump_hosts(hosts):
+    """
+    accept a dictionary like the `hosts` member returned by parse_all_files: {filename: dict} and write the `dict` object to `filename`
+    """
+    for fname, host in hosts.items():
+        with open(fname, 'w') as fd:
+            yaml.dump(host, fd, default_flow_style=False)
+
+def update_inventory(hw, inventory_dir, hostname):
+    hosts = {}
+
+    sp = parse_files([inventory_dir], 'sp-%s.yaml' % hostname).hosts
+    # SPs only have one interface
+    sp.values()[0]['interfaces'][0]['mac'] = hw.sp_mac
+    hosts.update(sp)
+    
+    # Same but for the host
+    host = parse_files([inventory_dir], '%s.yaml' % hostname).hosts
+    # HOSTs only have one interface
+    ifaces = host.values()[0]['interfaces']
+
+    eth0 = [iface for iface in ifaces if iface.get('iface') == 'eth0']
+    if not eth0:
+        eth0 = ifaces[0]
+    eth0['mac'] = hw.host_mac
+    hosts.update(host)
+
+    return hosts
+    
+
+def parse_hwinventory_file(fname, cfg):
+    # parse and update inventory files
+    host_macs = sp_mac = None
+
+    tree = ET.parse(fname)
+    root = tree.getroot()
+    sp_mac = root.find(".//Component[@Classname='DCIM_iDRACCardView']"
+                           "/PROPERTY[@NAME='PermanentMACAddress']/VALUE").text
+
+    if cfg.nic_index:
+        host_mac = [i.text.lower() for i in root.findall(
+            ".//Component[@Classname='DCIM_NICView'][@Key='NIC.Integrated.%s']"
+            "/PROPERTY[@NAME='PermanentMACAddress']/VALUE" % cfg.nic_index)][0]
+        host_macs = [i.text.lower() for i in root.findall(
+            ".//Component[@Classname='DCIM_NICView']"
+            "/PROPERTY[@NAME='PermanentMACAddress']/VALUE")]
+
     else:
-        lines.append("%s    %s %s" % (host_ip, fqdn, hostname))
+        nics = root.findall(".//Component[@Classname='DCIM_NICView']")
+        for nic in nics:
+            if nic.find(".//PROPERTY[@NAME='LinkSpeed']/VALUE").text != '0':
+                host_macs.append(
+                    nic.find(".//PROPERTY[@NAME='PermanentMACAddress']/VALUE"))
+        if not host_macs:
+            host_macs = [i.text.lower() for i in root.findall(
+                ".//Component[@Classname='DCIM_NICView']"
+                "/PROPERTY[@NAME='PermanentMACAddress']/VALUE")]
+        host_mac = host_macs[0]
 
-    return str.join('\n', lines)
-
+    return HW(sp_mac, host_macs, host_mac)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="""
-Parse R630 iDRAC hwinventory file, gather MAC addresses and produce snippets
-for DHCP configuration file and /etc/hosts.
+Parse R630 iDRAC hwinventory file, gather MAC addresses and update
+yaml inventory file corresponding to the machine.
 
 The file parsed by this tool is the output of the command:
 
     racadm hwinventory export -f <hwinventory.xml>
 
-You need to provide the path to the <hwinventory.xml> file, the IP of both
-the iDRAC (`--sp-ip`) and the host (`--host-ip`), the hostname (`--name`)
-and at least one of `--dhcp` or `hosts` options.
+You need to provide the path to the <hwinventory.xml> file, path to
+the invenetory database and the name of the machine with `--name`.
 
-By default the script will use the MAC address of the first interface in UP
-state, but you can define the correct interface with option `-x`, for instance:
+Files that will be updated:
+  `<name>.yaml`
+  `sp-<name>.yaml`
+
+By default the script will use the MAC address of the first interface
+in UP state, but you can define the correct interface with option
+`-x`, for instance:
 
     %s -x 1-2-1 ...
         """ % sys.argv[0],
@@ -84,71 +176,24 @@ state, but you can define the correct interface with option `-x`, for instance:
                         required=True,
                         help="""Hostname of the new host. Hostname of the SP
                         will be in the form `sp-<hostname>`""")
-    parser.add_argument("-i", "--host-ip",
-                        metavar="IP",
-                        dest="host_ip",
+    parser.add_argument("-i", "--inventory-dir",
+                        metavar="PATH",
                         required=True,
-                        help="IP Address of the new host")
-    parser.add_argument("-s", "--sp-ip",
-                        metavar="IP",
-                        dest="sp_ip",
-                        required=True,
-                        help="IP Address of the iDRAC of the new host")
-    parser.add_argument('-x', '--nic-index',
+                        help="Path to inventory directory.")
+    parser.add_argument('-x', '--nic-index', default='1-3-1',
                         help="""Specify the index of the NIC to be used for
                         host interface. If not provided, the script will try
                         to identify which port is in Up state. If more ports
                         are in UP, the first one will be used. If no interface
-                        is UP, the first one will be used.""")
-    parser.add_argument('-d', '--domain',
-                        default='gc3',
-                        help="""Domain to be added to `send host-name` DHCP
-                        option. Default: `%(default)s`""")
-    parser.add_argument('--hosts',
-                        action='store_true',
-                        help="Print a snippet for the /etc/hosts file")
-    parser.add_argument('--dhcp',
-                        action='store_true',
-                        help="Print a snippet for the DHCP configuration file")
+                        is UP, the first one will be used. Default: %(default)s""")
 
     cfg = parser.parse_args()
 
-    tree = ET.parse(cfg.xmlconf)
-    root = tree.getroot()
-    cfg.sp_mac = root.find(".//Component[@Classname='DCIM_iDRACCardView']"
-                           "/PROPERTY[@NAME='PermanentMACAddress']/VALUE").text
+    # parse hwinventory file
+    hw = parse_hwinventory_file(cfg.xmlconf, cfg)
 
-    if cfg.nic_index:
-        cfg.host_macs = root.findall(
-            ".//Component[@Classname='DCIM_NICView'][@Key='NIC.Integrated.%s']"
-            "/PROPERTY[@NAME='PermanentMACAddress']/VALUE" % cfg.nic_index)
-    else:
-        cfg.host_macs = []
-        nics = root.findall(".//Component[@Classname='DCIM_NICView']")
-        for nic in nics:
-            if nic.find(".//PROPERTY[@NAME='LinkSpeed']/VALUE").text != '0':
-                cfg.host_macs.append(
-                    nic.find(".//PROPERTY[@NAME='PermanentMACAddress']/VALUE"))
-        if not cfg.host_macs:
-            cfg.host_macs = root.findall(
-                ".//Component[@Classname='DCIM_NICView']"
-                "/PROPERTY[@NAME='PermanentMACAddress']/VALUE")
+    # Update yaml inventory files
+    hosts = update_inventory(hw, cfg.inventory_dir, cfg.hostname)
 
-    cfg.host_mac = cfg.host_macs[0].text
-
-    if cfg.dhcp:
-        print('')
-        print(build_dhcp_conf(cfg.hostname,
-                              cfg.sp_ip,
-                              cfg.sp_mac,
-                              cfg.host_ip,
-                              cfg.host_mac,
-                              cfg.domain))
-    if cfg.hosts:
-        print('')
-        print(build_hosts_conf(cfg.hostname,
-                               cfg.sp_ip,
-                               cfg.sp_mac,
-                               cfg.host_ip,
-                               cfg.host_mac,
-                               cfg.domain))
+    # Save the hosts
+    dump_hosts(hosts)
