@@ -4,10 +4,15 @@ me="$(basename $0)"
 
 usage () {
 cat <<EOF
-Usage: $me [options] HOSTNAME
+Usage: $me [options] HOSTNAME [HOSTNAME ...]
 
 Generate a self-signed certificate for the given host.
-The HOSTNAME must be the fully-qualified DNS name.
+
+The first HOSTNAME must be the primary host name (i.e., what the name
+used for A and PTR records in DNS).  Additional host names (aliases)
+can be specified on the command-line and will be included in the
+certificate as "subject alternate names".  All HOSTNAMEs must be
+fully-qualified DNS names.
 
 Options:
 
@@ -36,13 +41,36 @@ require_command () {
   fi
 }
 
+require_fully_qualified_name () {
+    # just check for the presence of a dot `.`
+    case "$1" in
+        *.*) return 0 ;;
+        *)   return 1 ;;
+    esac
+}
+
+require_name_in_dns () {
+    # we use `getent hosts` instead of hosts
+    # for two reasons:
+    #   1) it's always available, whereas ISC `host` is not
+    #   2) you can fool it using /etc/hosts which might come handy
+    #      (on the other hand, this introduces new subtle opportunities
+    #      for errors)
+    getent hosts "$1" >/dev/null 2>/dev/null
+}
+
 
 ## parse command-line
 
 short_opts='h'
 long_opts='help'
 
-if [ "x$(getopt -T)" != 'x--' ]; then
+# test which `getopt` version is available:
+# - GNU `getopt` will generate no output and exit with status 4
+# - POSIX `getopt` will output `--` and exit with status 0
+getopt -T > /dev/null
+rc=$?
+if [ "$rc" -eq 4 ]; then
     # GNU getopt
     args=$(getopt --name "$me" --shell sh -l "$long_opts" -o "$short_opts" -- "$@")
     if [ $? -ne 0 ]; then
@@ -74,8 +102,22 @@ fqdn="$1"
 if [ -z "$fqdn" ]; then
   die 1 "No HOSTNAME given. Please type '$me --help' for usage help."
 fi
+require_fully_qualified_name "$fqdn" \
+    || die 2 "Host name '$fqdn' is not a fully-qualified name."
+require_name_in_dns "$fqdn" \
+    || die 2 "Cannot resolve host name '$fqdn'.  It must be registered in the DNS database."
+
+# additional host names
+shift
+aliases="DNS:${fqdn}"
+for alias in "$@"; do
+    require_fully_qualified_name "$alias" \
+        || die 2 "Host name '$alias' is not a fully-qualified name."
+    aliases="${aliases}, DNS:${alias}"
+done
 
 
+require_command getent
 require_command openssl
 
 
@@ -104,7 +146,7 @@ ORGNAME = Universitaet Zuerich
 # the '#' character in the ALTNAMES line, and change the subsequent
 # 'DNS:' entries accordingly. Please note: all DNS names must
 # resolve to the same IP address as the FQDN.
-ALTNAMES = DNS:\$FQDN   # , DNS:bar.example.org , DNS:www.foo.example.org
+ALTNAMES = ${aliases}
 
 # --- no modifications required below ---
 [ req ]
@@ -129,4 +171,21 @@ openssl req -new -config "$tmp" -key "${fqdn}.key.pem" -out "${fqdn}.csr.pem"
 
 # sign it
 openssl x509 -req -days 365 -in "${fqdn}.csr.pem" -signkey "${fqdn}.key.pem" -out "${fqdn}.crt.pem"
+
+# show success
+cat <<__EOF__
+
+A self-signed X.509 certificate has been successuly generated
+with the following parameters:
+__EOF__
+
 openssl x509 -subject -startdate -enddate -noout -in "${fqdn}.crt.pem"
+
+cat <<__EOF__
+
+The certificate files are as follows:
+
+- PEM certificate file: '${fqdn}.crt.pem'
+- PEM key file: '${fqdn}.key.pem'
+
+__EOF__
