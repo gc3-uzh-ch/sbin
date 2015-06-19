@@ -115,12 +115,10 @@ def parse_inventory_database(path, only_networks):
 
 # ask for how_many in mngt and gc3, with the same last bit
 def find_good_ranges(networks, how_many=10, gap=256*4):
-    good_ranges = []
     # cfr. http://stackoverflow.com/questions/2154249/identify-groups-of-continuous-numbers-in-a-list
-    #
     for network in networks:
         for k, g in groupby(enumerate(network), lambda (i,x):x-i):
-            r = map(itemgetter(1), g)
+            r = [it[1] for it in g]
             if len(r) >= how_many:
                 yield r
 
@@ -132,8 +130,9 @@ if __name__ == "__main__":
         else:
             parser.error("Non-existent directory %s" % path)
 
-    parser.add_argument('-i','--inventory-dir', metavar='PATH', help='Path to inventory database', type=lambda x: is_valid_dir(parser, x))
-    parser.add_argument('-c', '--count', type=int, default=10, help='How many consecutive hosts')
+    parser.add_argument('-i','--inventory-dir', metavar='PATH', default='/etc/s3it/inventory',
+			help='Path to inventory database', type=lambda x: is_valid_dir(parser, x))
+    parser.add_argument('-c', '--count', type=int, default=1, help='How many consecutive hosts')
     parser.add_argument('--net', required=True, action='append', help="""Which network to use. Currently defined networks:
     %s""" % str.join(', ', ["%s:%s" % (name, net['net']) for name, net in default_networks.items()]))
 
