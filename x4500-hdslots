@@ -171,8 +171,11 @@ else:
         lshw.append('-quiet')
     lshw_output = check_output(lshw, shell=False)
     data = et.fromstring(lshw_output)
-assert data.tag == 'list'
-data = data.find("./node[@class='system']")
+
+if data.tag == 'list':
+    data = data.find("./node[@class='system']")
+else:
+    assert data.tag == 'node'
 assert data.attrib['class'] == 'system'
 
 product = data.findtext('product')
@@ -192,19 +195,23 @@ for child in data.iter('node'):
     if child.get('id') != 'scsi' or child.get('class') != 'storage':
         continue
     ctrl_nr += 1
+    logging.debug("Parsing ctrl nr %d" % ctrl_nr)
     # try to find out whether BIOS emulation of boot devices is on;
     # like many things in this script, this is very ad-hoc and matches
     # what I've seen on a single X4540 machine -- there is no guarantee
     # it will ever work on other HW configurations, etc.
-    caps = child.find('capabilities')
-    for capability in caps.iter('capability'):
-        captext = capability.text
-        if captext is not None and 'emulated' in captext.lower():
-            have_emulated_disks = True
-            logging.info("ILOM Virtual disks feature is on -- shifting controller numbers")
+    if model == 'x4540':
+        caps = child.find('capabilities')
+        for capability in caps.iter('capability'):
+            captext = capability.text
+            if captext is not None and 'emulated' in captext.lower():
+                have_emulated_disks = True
+                logging.info("ILOM Virtual disks feature is on"
+                             " -- shifting controller numbers")
     # extract disk ID
     for grandchild in child.iter('node'):
         if grandchild.get('class') != 'disk':
+            logging.debug("Skipping node %s" % grandchild.attrib['id'])
             continue
         physid = grandchild.findtext('physid')
         try:
@@ -215,6 +222,7 @@ for child in data.iter('node'):
             continue
         devname = grandchild.findtext('logicalname')
         serial = grandchild.findtext('serial') or '[serial unknown]'
+        logging.debug("Found disk with physid %s, devname %s and serial %s" % (physid, devname, serial))
         ctrl_and_disk_info[ (ctrl_nr, disk_nr) ]['device'] = devname
         ctrl_and_disk_info[ (ctrl_nr, disk_nr) ]['serial'] = serial
 
@@ -240,7 +248,9 @@ if not ctrl_and_disk_info:
             disk_nr = int(disk_nr)
             # try to get the serial nr by `hdparm -I`
             try:
-                _, serial = check_output("hdparm -I /dev/%s | grep -i 'serial number'" % entry, shell=True).strip().split(':')
+                _, serial = check_output(
+                    ("hdparm -I /dev/%s | grep -i 'serial number'" % entry),
+                    shell=True).strip().split(':')
                 serial = serial.lstrip()
             except Exception as err:
                 logging.error("Cannot read serial number of device '%s' via `hdparm -I`", entry, err)
@@ -256,4 +266,4 @@ for slot, hw in slot_to_ctl_and_diskno[model].items():
     try:
         print "%2d: %-10s %s" % (slot, ctrl_and_disk_info[hw]['device'], ctrl_and_disk_info[hw]['serial'])
     except KeyError:
-        print "%2d: UNKNOWN" % (slot,)
+        print "%2d: UNKNOWN %s" % (slot, hw)
