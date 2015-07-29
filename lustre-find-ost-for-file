@@ -63,17 +63,29 @@ def lustre_get_obdidx(path):
     #
     lfs_getstripe_output = check_output(['lfs', 'getstripe', path], stderr=subprocess.STDOUT)
     read_data_now = False
+
+    obdidx = []
+    objid_dec = []
+    objid_hex = []
+    group = []
+
     for line in lfs_getstripe_output.split('\n'):
         line = line.strip()
         if line.startswith('obdidx'):
             read_data_now = True
             continue
         elif read_data_now:
-            obdidx, objid_dec, objid_hex, group = line.split()
-            read_data_now = False
+            if line.strip() == '':
+                continue
+            Tobdidx, Tobjid_dec, Tobjid_hex, Tgroup = line.split()
+            obdidx.append(Tobdidx)
+            objid_dec.append(Tobjid_dec)
+            objid_hex.append(Tobjid_hex)
+            group.append(Tgroup)
+            #read_data_now = False
         else:
             pass # ignore line
-    return int(obdidx)
+    return obdidx #int(obdidx)
 
 def lustre_get_ost_names():
     """Call ``lfs osts`` and return a dictionary mapping `obdidx` (integer) to OST name."""
@@ -100,24 +112,25 @@ def lustre_get_ost_names():
         ostnames[obdidx] = ostname
     return ostnames
 
-def lustre_get_ost_hostname(ostname, _cache={}):
-    if ostname not in _cache:
-        conn = glob('/proc/fs/lustre/osc/%s*/ost_conn_uuid' % ostname)
-        if len(conn) == 0:
-            hostname = '???'
-        else:
-            # `conn` has at least one element
-            try:
-                ipaddr, _ = open(conn[0], 'r').read().split('@')
-            except IOError, err:
-                sys.stderr.write("%s: cannot read file '%s': %s\n" % (sys.argv[0], conn[0], err))
+def lustre_get_ost_hostname(ostnameList, _cache={}):
+    for ostname in ostnameList:
+        if ostname not in _cache:
+            conn = glob('/proc/fs/lustre/osc/%s*/ost_conn_uuid' % ostname)
+            if len(conn) == 0:
                 hostname = '???'
-            try:
-                hostname, aliases, ipaddresses = socket.gethostbyaddr(ipaddr)
-            except socket.error:
-                sys.stderr.write("%s: cannot get host name for IP address %s\n" % (sys.argv[0], ipaddr))
-                hostname = ipaddr
-        _cache[ostname] = hostname
+            else:
+                # `conn` has at least one element
+                try:
+                    ipaddr, _ = open(conn[0], 'r').read().split('@')
+                except IOError, err:
+                    sys.stderr.write("%s: cannot read file '%s': %s\n" % (sys.argv[0], conn[0], err))
+                    hostname = '???'
+                try:
+                    hostname, aliases, ipaddresses = socket.gethostbyaddr(ipaddr)
+                except socket.error:
+                    sys.stderr.write("%s: cannot get host name for IP address %s\n" % (sys.argv[0], ipaddr))
+                    hostname = ipaddr
+            _cache[ostname] = hostname
     return _cache[ostname]
 
 
@@ -139,6 +152,9 @@ for path in sys.argv[1:]:
         sys.stderr.write("%s: `lfs getstripe` returned unexpected value for `obdidx`: %s"
                          % (path, err))
         continue
-    ostname = ostnames[obdidx]
+    ostname = []
+    for obId in obdidx:
+        print obId
+        ostname.append( ostnames[int(obId)] )
     hostname = lustre_get_ost_hostname(ostname)
     sys.stdout.write("%s: %s (%s)\n" % (path, ostname, hostname))
