@@ -2,6 +2,14 @@
 #
 me="$(basename $0)"
 
+## defaults
+
+default_bits=4096
+
+
+## usage and help text
+
+
 usage () {
 cat <<EOF
 Usage: $me [options] HOSTNAME [HOSTNAME ...]
@@ -17,6 +25,9 @@ certificate as "subject alternate names".  All HOSTNAMEs must be
 fully-qualified DNS names.
 
 Options:
+
+  --bits, -b BITS
+     Set BITS long modulus. Default is 4096.
 
   --help, -h  Print this help text.
 
@@ -64,8 +75,8 @@ require_name_in_dns () {
 
 ## parse command-line
 
-short_opts='h'
-long_opts='help'
+short_opts='b:h'
+long_opts='bits:,help'
 
 # test which `getopt` version is available:
 # - GNU `getopt` will generate no output and exit with status 4
@@ -91,7 +102,8 @@ fi
 
 while [ $# -gt 0 ]; do
     case "$1" in
-        --help|-h) usage; exit 0 ;;
+        --bits|-b) default_bits="$2"; shift ;;
+        --help|-h)       usage; exit 0 ;;
         --) shift; break ;;
     esac
     shift
@@ -126,7 +138,7 @@ require_command openssl
 set -ex
 
 # generate key (no passwd, no encryption)
-openssl genrsa -out "${fqdn}.key.pem" 4096
+openssl genrsa -out "${fqdn}.key.pem" $default_bits
 
 # generate CSR
 tmp=$(mktemp "${me}.XXXXXX.cnf") \
@@ -152,7 +164,7 @@ ALTNAMES = ${aliases}
 
 # --- no modifications required below ---
 [ req ]
-default_bits = 2048
+default_bits = $default_bits
 prompt = no
 encrypt_key = no
 distinguished_name = dn
