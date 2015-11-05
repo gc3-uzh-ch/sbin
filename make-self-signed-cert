@@ -16,10 +16,17 @@ fully-qualified DNS names.
 
 Options:
 
-  --help, -h  Print this help text.
+  -f, --skip-dns-check
+              Do not require that the primary host name can be
+              resolved through DNS.  Use at your own risk.
 
+  -h, --help  Print this help text.
 EOF
 }
+
+## defaults
+
+require_dns_check='yes'
 
 
 ## helper functions
@@ -89,8 +96,16 @@ fi
 
 while [ $# -gt 0 ]; do
     case "$1" in
-        --help|-h) usage; exit 0 ;;
-        --) shift; break ;;
+        --skip-dns-check|--no-dns|-f)
+            require_dns_check='no'
+            ;;
+        --help|-h)
+            usage; exit 0
+            ;;
+        --)
+            shift;
+            break;
+            ;;
     esac
     shift
 done
@@ -104,8 +119,10 @@ if [ -z "$fqdn" ]; then
 fi
 require_fully_qualified_name "$fqdn" \
     || die 2 "Host name '$fqdn' is not a fully-qualified name."
-require_name_in_dns "$fqdn" \
-    || die 2 "Cannot resolve host name '$fqdn'.  It must be registered in the DNS database."
+if [ "$require_dns_check" = 'yes' ] then
+   require_name_in_dns "$fqdn" \
+       || die 2 "Cannot resolve host name '$fqdn'.  It must be registered in the DNS database."
+fi
 
 # additional host names
 shift
