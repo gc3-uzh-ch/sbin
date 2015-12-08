@@ -62,6 +62,10 @@ default_networks = {
     {'net': IPNetwork('10.129.32.0/20'),
      'used': [],
      'free': [], },
+    'hydra':
+    {'net': IPNetwork('10.129.48.0/20'),
+     'used': [],
+     'free': [], },
 }
 
 def parse_etc_hosts(fd, only_networks=None, skip_comments=True):
