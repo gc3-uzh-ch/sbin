@@ -39,24 +39,23 @@ def parse_getmacaddress(fd):
     #
     # Typical output:
     #
-    # <Name>         <Type>              <Presence>    <Active WWN/MAC>          <Partition Status>  <Assignment Type>   
-    # CMC            N/A                 Present       44:A8:42:3B:B8:3F         N/A                 Factory             
+    # <Name>         <Type>              <Presence>    <Active WWN/MAC>          <Partition Status>  <Assignment Type>
+    # CMC            N/A                 Present       44:A8:42:3B:B8:3F         N/A                 Factory
     # Server-1-A     IDRAC-Controller    Present       1C:40:24:34:80:A0         N/A                 FlexAddress
-    #                10 GbE KR           Present       1C:40:24:34:80:A1         Enabled             FlexAddress         
-    #                10 GbE KR           Present       1C:40:24:34:80:A3         Enabled             FlexAddress         
-    #                FCoE-FIP            Present       1C:40:24:34:80:A2         Disabled            FlexAddress         
-    #                FCoE-FIP            Present       1C:40:24:34:80:A4         Disabled            FlexAddress         
-    #                FCoE-WWN            Present       20:01:1C:40:24:34:80:A2   Disabled            FlexAddress         
-    #                FCoE-WWN            Present       20:01:1C:40:24:34:80:A4   Disabled            FlexAddress         
-    # Server-1-B     Gigabit Ethernet    Not Installed                           Not Installed       Not Installed       
-    # Server-1-C     Gigabit Ethernet    Present       1C:40:24:34:80:A9         Unknown             FlexAddress         
-    #                Gigabit Ethernet    Present       1C:40:24:34:80:AB         Unknown             FlexAddress         
-    #                Gigabit Ethernet    Present       1C:40:24:34:80:AA         Unknown             FlexAddress         
-    #                Gigabit Ethernet    Present       1C:40:24:34:80:AC         Unknown             FlexAddress         
+    #                10 GbE KR           Present       1C:40:24:34:80:A1         Enabled             FlexAddress
+    #                10 GbE KR           Present       1C:40:24:34:80:A3         Enabled             FlexAddress
+    #                FCoE-FIP            Present       1C:40:24:34:80:A2         Disabled            FlexAddress
+    #                FCoE-FIP            Present       1C:40:24:34:80:A4         Disabled            FlexAddress
+    #                FCoE-WWN            Present       20:01:1C:40:24:34:80:A2   Disabled            FlexAddress
+    #                FCoE-WWN            Present       20:01:1C:40:24:34:80:A4   Disabled            FlexAddress
+    # Server-1-B     Gigabit Ethernet    Not Installed                           Not Installed       Not Installed
+    # Server-1-C     Gigabit Ethernet    Present       1C:40:24:34:80:A9         Unknown             FlexAddress
+    #                Gigabit Ethernet    Present       1C:40:24:34:80:AB         Unknown             FlexAddress
+    #                Gigabit Ethernet    Present       1C:40:24:34:80:AA         Unknown             FlexAddress
+    #                Gigabit Ethernet    Present       1C:40:24:34:80:AC         Unknown             FlexAddress
     hosts = defaultdict(dict)
-    curhost = {}
     server_re = re.compile(r'Server-(?P<slot>[0-9]+)-(?P<switch>[A-C])\s+.(?P<type>IDRAC-Controller|Gigabit Ethernet)\s+Present\s+(?P<mac>[^\s]+)\s')
-    # 10gbe_re = r'\s+10 GbE KR\s+Present\+(?P<mac>[^\s]+)\+'
+
     for line in fd:
         match = server_re.search(line)
         if match:
@@ -74,15 +73,16 @@ def build_inventory_hosts(inventory_path, chassis, start_v840, start_v841, start
     v840ip = ipaddress.ip_address(unicode(start_v840))
     v841ip = ipaddress.ip_address(unicode(start_v841))
     v618ip = ipaddress.ip_address(unicode(start_v618))
-    for slot,rawhost in hosts.items():
+    for slot in sorted(hosts.keys()):
+        rawhost = hosts[slot]
         # Actually build two hosts, one for the sp and one for the host
         hostname = 'node-%s-%s' % (chassis, slot)
         sphostname = 'sp-' + hostname
-        
+
         host = {
             'fqdn': hostname,
             'interfaces': [
-                {'aliases': [hostname, hostname+'.int', hostname+'.int.s3it.uzh.ch'],                 
+                {'aliases': [hostname, hostname+'.int', hostname+'.int.s3it.uzh.ch'],
                  'broadcast': '192.168.163.255',
                  'gateway': '192.168.160.1',
                  'iface': 'eth0',
@@ -152,4 +152,3 @@ if __name__ == "__main__":
     hosts = parse_getmacaddress(cfg.file)
     inventory = build_inventory_hosts(cfg.inventory_path, cfg.location, cfg.start_v840, cfg.start_v841, cfg.start_v618, hosts)
     dump_hosts(inventory)
-
