@@ -53,6 +53,7 @@ def parse_getmacaddress(fd):
     #                Gigabit Ethernet    Present       1C:40:24:34:80:AB         Unknown             FlexAddress
     #                Gigabit Ethernet    Present       1C:40:24:34:80:AA         Unknown             FlexAddress
     #                Gigabit Ethernet    Present       1C:40:24:34:80:AC         Unknown             FlexAddress
+
     hosts = defaultdict(dict)
     server_re = re.compile(r'Server-(?P<slot>[0-9]+)-(?P<switch>[A-C])\s+.(?P<type>IDRAC-Controller|Gigabit Ethernet)\s+Present\s+(?P<mac>[^\s]+)\s')
 
@@ -65,6 +66,8 @@ def parse_getmacaddress(fd):
                 hosts[myid]['sp-mac'] = match.group('mac').lower()
             elif switch == 'C':
                 hosts[myid]['eth0-mac'] = match.group('mac').lower()
+        # else:
+        #     print("Line '%s' not matching regexp '%s'" % (line.strip(), server_re.pattern))
     return hosts
 
 def build_inventory_hosts(inventory_path, chassis, start_v840, start_v841, start_v618, hosts):
@@ -140,15 +143,14 @@ def build_inventory_hosts(inventory_path, chassis, start_v840, start_v841, start
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('-l', '--location', required=True, help='Location, e.g. l5-21')
-    parser.add_argument('-d', '--inventory-path', default='/etc/s3it/inventory')
+    parser.add_argument('-d', '--inventory-path', default='/etc/s3it/inventory', help='Path to inventory directory. Default: %(default)s')
     parser.add_argument('--start-v840', required=True, help='Starting IP in vlan 840')
     parser.add_argument('--start-v841', required=True, help='Starting IP in vlan 841')
     parser.add_argument('--start-v618', required=True, help='Starting IP in vlan 618')
     parser.add_argument('file', nargs='?', type=argparse.FileType('r'), default=sys.stdin,
-                        help='Output of command "racadm getmacaddress -a"')
+                        help='Output of command "racadm getmacaddress -c all"')
 
     cfg = parser.parse_args()
-
     hosts = parse_getmacaddress(cfg.file)
     inventory = build_inventory_hosts(cfg.inventory_path, cfg.location, cfg.start_v840, cfg.start_v841, cfg.start_v618, hosts)
     dump_hosts(inventory)
