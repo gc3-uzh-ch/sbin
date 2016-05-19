@@ -119,7 +119,7 @@ if [ -z "$fqdn" ]; then
 fi
 require_fully_qualified_name "$fqdn" \
     || die 2 "Host name '$fqdn' is not a fully-qualified name."
-if [ "$require_dns_check" = 'yes' ] then
+if [ "$require_dns_check" = 'yes' ]; then
    require_name_in_dns "$fqdn" \
        || die 2 "Cannot resolve host name '$fqdn'.  It must be registered in the DNS database."
 fi
